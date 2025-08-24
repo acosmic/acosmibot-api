@@ -9,7 +9,7 @@ __pycache__/
 venv/
 env/
 
-# Environment variables (IMPORTANT - keeps secrets safe)
+# Environment variables
 .env
 .env.local
 .env.production

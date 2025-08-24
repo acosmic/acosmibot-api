@@ -24,4 +24,4 @@ Flask-based REST API for Acosmibot Discord bot web interface.
 - `GET /api/user/{id}` - Get user info
 
 ## Related Projects
-- [Acosmibot](https://github.com/yourusername/acosmibot) - Main Discord bot
+- [Acosmibot](https://github.com/acosmic/acosmibot) - Main Discord bot
