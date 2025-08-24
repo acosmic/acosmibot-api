@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Environment variables (IMPORTANT - keeps secrets safe)
+.env
+.env.local
+.env.production
+
+# Logs
+logs/
+*.log
+
+# PyCharm
+.idea/
+*.iml
