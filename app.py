@@ -7,6 +7,7 @@ from functools import wraps
 import jwt
 import os
 import atexit
+import asyncio
 
 # Set up path to bot project
 current_dir = Path(__file__).parent
@@ -23,15 +24,24 @@ from models.api_models import (
 )
 from models.base_models import RoleCacheEntry
 from models.discord_models import DiscordRole, GuildChannelInfo
-from discord_integration import (
-    check_guild_admin_permissions_sync,
-    get_discord_guild_data_sync,
-    get_guild_info_sync,
-    get_user_manageable_guilds_sync,
-    initialize_discord_client,
-    cleanup_discord_client,
-    run_async
-)
+
+# Import Discord integration functions
+# from discord_integration import (
+#     discord_rest_client,
+#     check_guild_admin_permissions_sync,
+#     get_discord_guild_data_sync,
+#     get_guild_info_sync,
+#     get_user_manageable_guilds_sync,
+#     initialize_discord_client,
+#     cleanup_discord_client,
+#     run_async
+# )
+
+# Add this helper function for the new REST client
+def run_async_rest(coro):
+    """Run async function for REST client"""
+    return run_async(coro)
+
 from datetime import datetime
 import logging
 logging.basicConfig(
@@ -218,6 +228,189 @@ def get_current_user():
         return jsonify({'error': str(e)}), 500
 
 
+# Add these endpoints to your app.py to fix the stats and leaderboard errors
+
+@app.route('/api/guilds/<guild_id>/stats-db', methods=['GET'])
+@require_auth
+def get_guild_stats_db_only(guild_id):
+    """Get guild statistics using database-only approach"""
+    try:
+        from Dao.GuildDao import GuildDao
+        from Dao.GuildUserDao import GuildUserDao
+
+        guild_dao = GuildDao()
+        guild_user_dao = GuildUserDao()
+
+        # Get guild record
+        guild_record = guild_dao.find_by_id(int(guild_id))
+        if not guild_record:
+            return jsonify({
+                "success": False,
+                "message": "Guild not found"
+            }), 404
+
+        # Get basic stats using direct SQL queries
+        try:
+            # Count active members
+            active_members_sql = "SELECT COUNT(*) FROM GuildUsers WHERE guild_id = %s AND is_active = TRUE"
+            active_members_result = guild_dao.execute_query(active_members_sql, (int(guild_id),))
+            active_members = active_members_result[0][0] if active_members_result else 0
+
+            # Total messages in guild
+            total_messages_sql = "SELECT SUM(messages_sent) FROM GuildUsers WHERE guild_id = %s AND is_active = TRUE"
+            total_messages_result = guild_dao.execute_query(total_messages_sql, (int(guild_id),))
+            total_messages = total_messages_result[0][0] if total_messages_result and total_messages_result[0][0] else 0
+
+            # Total exp in guild
+            total_exp_sql = "SELECT SUM(exp) FROM GuildUsers WHERE guild_id = %s AND is_active = TRUE"
+            total_exp_result = guild_dao.execute_query(total_exp_sql, (int(guild_id),))
+            total_exp = total_exp_result[0][0] if total_exp_result and total_exp_result[0][0] else 0
+
+            # Highest level
+            highest_level_sql = "SELECT MAX(level) FROM GuildUsers WHERE guild_id = %s AND is_active = TRUE"
+            highest_level_result = guild_dao.execute_query(highest_level_sql, (int(guild_id),))
+            highest_level = highest_level_result[0][0] if highest_level_result and highest_level_result[0][0] else 0
+
+            # Average level
+            avg_level_sql = "SELECT AVG(level) FROM GuildUsers WHERE guild_id = %s AND is_active = TRUE"
+            avg_level_result = guild_dao.execute_query(avg_level_sql, (int(guild_id),))
+            avg_level = round(avg_level_result[0][0], 1) if avg_level_result and avg_level_result[0][0] else 0
+
+        except Exception as e:
+            # Fallback values if queries fail
+            active_members = guild_record.member_count or 0
+            total_messages = 0
+            total_exp = 0
+            highest_level = 0
+            avg_level = 0
+
+        guild_stats = {
+            "guild_id": guild_id,
+            "guild_name": guild_record.name,
+            "member_count": guild_record.member_count or 0,
+            "total_active_members": active_members,
+            "total_messages": total_messages,
+            "total_exp_distributed": total_exp,
+            "highest_level": highest_level,
+            "avg_level": avg_level,
+            "last_activity": guild_record.last_active,
+            "method": "database_only"
+        }
+
+        return jsonify({
+            "success": True,
+            "data": guild_stats
+        })
+
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "success": False,
+            "message": "Failed to get guild statistics",
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+
+@app.route('/api/guilds/<guild_id>/leaderboard/level-db', methods=['GET'])
+@require_auth
+def get_guild_level_leaderboard_db(guild_id):
+    """Get level leaderboard for a specific guild using database-only approach"""
+    try:
+        from Dao.GuildDao import GuildDao
+
+        guild_dao = GuildDao()
+        limit = min(int(request.args.get('limit', 10)), 50)
+
+        # Direct SQL query for leaderboard
+        sql = """
+              SELECT gu.user_id, u.discord_username, gu.level, gu.exp, gu.messages_sent
+              FROM GuildUsers gu
+                       LEFT JOIN Users u ON gu.user_id = u.id
+              WHERE gu.guild_id = %s \
+                AND gu.is_active = TRUE
+              ORDER BY gu.level DESC, gu.exp DESC
+                  LIMIT %s \
+              """
+
+        results = guild_dao.execute_query(sql, (int(guild_id), limit))
+
+        leaderboard = []
+        for i, row in enumerate(results):
+            user_id, username, level, exp, messages = row
+            leaderboard.append({
+                "rank": i + 1,
+                "user_id": user_id,
+                "username": username or f"User {user_id}",
+                "level": level or 0,
+                "exp": exp or 0,
+                "messages": messages or 0
+            })
+
+        return jsonify({
+            "success": True,
+            "data": leaderboard
+        })
+
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "success": False,
+            "message": "Failed to get leaderboard",
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+
+@app.route('/api/guilds/<guild_id>/leaderboard/messages-db', methods=['GET'])
+@require_auth
+def get_guild_messages_leaderboard_db(guild_id):
+    """Get messages leaderboard for a specific guild using database-only approach"""
+    try:
+        from Dao.GuildDao import GuildDao
+
+        guild_dao = GuildDao()
+        limit = min(int(request.args.get('limit', 10)), 50)
+
+        # Direct SQL query for messages leaderboard
+        sql = """
+              SELECT gu.user_id, u.discord_username, gu.messages_sent, gu.level, gu.exp
+              FROM GuildUsers gu
+                       LEFT JOIN Users u ON gu.user_id = u.id
+              WHERE gu.guild_id = %s \
+                AND gu.is_active = TRUE
+              ORDER BY gu.messages_sent DESC
+                  LIMIT %s \
+              """
+
+        results = guild_dao.execute_query(sql, (int(guild_id), limit))
+
+        leaderboard = []
+        for i, row in enumerate(results):
+            user_id, username, messages, level, exp = row
+            leaderboard.append({
+                "rank": i + 1,
+                "user_id": user_id,
+                "username": username or f"User {user_id}",
+                "messages": messages or 0,
+                "level": level or 0,
+                "exp": exp or 0
+            })
+
+        return jsonify({
+            "success": True,
+            "data": leaderboard
+        })
+
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "success": False,
+            "message": "Failed to get leaderboard",
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
 # Guild Management Endpoints
 # @app.route('/api/user/guilds', methods=['GET'])
 # @require_auth
@@ -297,72 +490,274 @@ def get_user_guilds():
         }), 500
 
 
-@app.route('/api/guilds/<guild_id>/config', methods=['GET'])
+#
+# @app.route('/api/guilds/<guild_id>/config-db', methods=['GET'])
+# @require_auth
+# def get_guild_config_database_only(guild_id):
+#     """Get guild config using database-only approach (bypass Discord API issues)"""
+#     try:
+#         from Dao.GuildDao import GuildDao
+#         from Dao.GuildUserDao import GuildUserDao
+#
+#         guild_dao = GuildDao()
+#         guild_user_dao = GuildUserDao()
+#
+#         # Get guild record
+#         guild_record = guild_dao.find_by_id(int(guild_id))
+#         if not guild_record or not guild_record.active:
+#             return jsonify({
+#                 "success": False,
+#                 "message": "Guild not found or inactive"
+#             }), 404
+#
+#         # Check permissions
+#         is_owner = str(guild_record.owner_id) == request.user_id
+#         guild_user = guild_user_dao.get_guild_user(int(request.user_id), int(guild_id))
+#         is_active_member = guild_user is not None and guild_user.is_active
+#
+#         if not (is_owner or is_active_member):
+#             return jsonify({
+#                 "success": False,
+#                 "message": "Access denied"
+#             }), 403
+#
+#         # Get settings
+#         settings_manager = get_settings_manager()
+#         settings = settings_manager.get_guild_settings(guild_id)
+#
+#         # Build config using ONLY attributes that exist
+#         config_data = {
+#             "guild_id": guild_id,
+#             "guild_name": guild_record.name,
+#             "member_count": guild_record.member_count or 0,
+#             "owner_id": str(guild_record.owner_id),
+#             "settings": {
+#                 "leveling": {
+#                     "enabled": settings.leveling.enabled,
+#                     "exp_per_message": settings.leveling.exp_per_message,
+#                     "base_exp": settings.leveling.base_exp,
+#                     "exp_multiplier": settings.leveling.exp_multiplier,
+#                     "exp_growth_factor": settings.leveling.exp_growth_factor,
+#                     "exp_cooldown_seconds": settings.leveling.exp_cooldown_seconds,
+#                     "max_level": settings.leveling.max_level,
+#                     "level_up_announcements": settings.leveling.level_up_announcements,
+#                     "announcement_channel_id": settings.leveling.announcement_channel_id
+#                 },
+#                 "roles": {
+#                     # Only use attributes that were shown to exist
+#                     "enabled": settings.roles.enabled,
+#                     "mode": settings.roles.mode,
+#                     "remove_previous_roles": settings.roles.remove_previous_roles,
+#                     "max_level_tracked": settings.roles.max_level_tracked,
+#                     "role_announcement": settings.roles.role_announcement,
+#                     "role_announcement_message": settings.roles.role_announcement_message,
+#                     "role_mappings": dict(settings.roles.role_mappings),
+#                     "role_cache": {role_id: role.dict() for role_id, role in settings.roles.role_cache.items()}
+#                 }
+#             },
+#             "available_roles": [],  # Discord API not available
+#             "available_channels": [],  # Discord API not available
+#             "permissions": {
+#                 "is_owner": is_owner,
+#                 "can_configure": is_owner or is_active_member,
+#                 "can_view_stats": True,
+#                 "method": "database_only"
+#             }
+#         }
+#
+#         return jsonify({
+#             "success": True,
+#             "data": config_data
+#         })
+#
+#     except Exception as e:
+#         import traceback
+#         return jsonify({
+#             "success": False,
+#             "message": "Internal server error",
+#             "error": str(e),
+#             "traceback": traceback.format_exc()
+#         }), 500
+
+# @app.route('/api/guilds/<guild_id>/config', methods=['GET'])
+# @require_auth
+# def get_guild_config(guild_id):
+#     """Get complete guild configuration"""
+#     try:
+#         # Check permissions
+#         has_admin = check_guild_admin_permissions_sync(request.user_id, guild_id)
+#         if not has_admin:
+#             return jsonify({
+#                 "success": False,
+#                 "message": "You don't have permission to manage this server",
+#                 "error_code": "insufficient_permissions"
+#             }), 403
+#
+#         # Get guild info
+#         guild_info = get_guild_info_sync(guild_id)
+#         if not guild_info:
+#             return jsonify({
+#                 "success": False,
+#                 "message": "Guild not found",
+#                 "error_code": "guild_not_found"
+#             }), 404
+#
+#         # Get settings
+#         settings_manager = get_settings_manager()
+#         settings = settings_manager.get_guild_settings(guild_id)
+#
+#         # Get Discord data
+#         available_roles, available_channels = get_discord_guild_data_sync(guild_id)
+#
+#         # Build role mappings response
+#         role_mappings = []
+#         for level, role_ids in settings.roles.role_mappings.items():
+#             roles = []
+#             for role_id in role_ids:
+#                 # Find role in available roles
+#                 role_info = next((r for r in available_roles if r.id == role_id), None)
+#                 if role_info:
+#                     roles.append(role_info.dict())
+#                 else:
+#                     # Use cached role info
+#                     cached_role = settings.roles.role_cache.get(role_id)
+#                     if cached_role:
+#                         roles.append({
+#                             "id": role_id,
+#                             "name": cached_role.name,
+#                             "color": cached_role.color,
+#                             "position": cached_role.position,
+#                             "managed": cached_role.managed,
+#                             "mentionable": True,
+#                             "hoist": False
+#                         })
+#
+#             if roles:  # Only include levels that have valid roles
+#                 role_mappings.append({
+#                     "level": int(level),
+#                     "roles": roles
+#                 })
+#
+#         response_data = {
+#             "guild_id": guild_id,
+#             "guild_name": guild_info["name"],
+#             "settings": settings.dict(),
+#             "available_roles": [role.dict() for role in available_roles],
+#             "available_channels": [channel.dict() for channel in available_channels],
+#             "role_mappings": role_mappings
+#         }
+#
+#         return jsonify({
+#             "success": True,
+#             "data": response_data
+#         })
+#
+#     except Exception as e:
+#         print(f"Error getting guild config: {e}")
+#         return jsonify({
+#             "success": False,
+#             "message": "Failed to get guild configuration",
+#             "error": str(e)
+#         }), 500
+
+# testing shiiiiiiiiiiit
+from discord_integration import check_admin_sync, get_channels_sync, list_guilds_sync, http_client, run_sync
+
+
+# Add this to your app.py file after the simple test endpoint
+
+@app.route('/api/guilds/<guild_id>/config-hybrid', methods=['GET'])
 @require_auth
-def get_guild_config(guild_id):
-    """Get complete guild configuration"""
+def get_guild_config_hybrid(guild_id):
+    """Get guild configuration using hybrid approach (database + live Discord data)"""
     try:
-        # Check permissions
-        has_admin = check_guild_admin_permissions_sync(request.user_id, guild_id)
+        print(f"Hybrid config request for user {request.user_id} in guild {guild_id}")
+
+        # Check permissions using our working HTTP client
+        has_admin = check_admin_sync(request.user_id, guild_id)
         if not has_admin:
             return jsonify({
                 "success": False,
-                "message": "You don't have permission to manage this server",
-                "error_code": "insufficient_permissions"
+                "message": "You don't have permission to manage this server"
             }), 403
 
-        # Get guild info
-        guild_info = get_guild_info_sync(guild_id)
+        print("Permission check passed")
+
+        # Get guild info from Discord HTTP API
+        guild_info = run_sync(http_client.get_guild_info(guild_id))
         if not guild_info:
             return jsonify({
                 "success": False,
-                "message": "Guild not found",
-                "error_code": "guild_not_found"
+                "message": "Guild not found"
             }), 404
 
-        # Get settings
-        settings_manager = get_settings_manager()
-        settings = settings_manager.get_guild_settings(guild_id)
+        # Get settings from database
+        try:
+            settings_manager = get_settings_manager()
+            settings = settings_manager.get_guild_settings(guild_id)
+        except Exception as settings_error:
+            print(f"Error getting settings: {settings_error}")
+            # Create default settings if there's an error
+            settings = type('DefaultSettings', (), {
+                'dict': lambda: {
+                    'leveling': {'enabled': True, 'announcement_channel_id': None},
+                    'roles': {'enabled': True, 'mode': 'auto'},
+                    'economy': {'enabled': True}
+                },
+                'roles': type('DefaultRoles', (), {'role_mappings': {}})
+            })()
 
-        # Get Discord data
-        available_roles, available_channels = get_discord_guild_data_sync(guild_id)
+        # Get live Discord data using our working HTTP client
+        available_roles = []
+        available_channels = get_channels_sync(guild_id)
+
+        # Get roles via HTTP API
+        try:
+            roles_data = run_sync(http_client.get_guild_roles(guild_id))
+            for role in roles_data:
+                if role['name'] != '@everyone':
+                    available_roles.append({
+                        'id': str(role['id']),
+                        'name': role['name'],
+                        'color': f"#{role['color']:06x}" if role['color'] != 0 else "#99AAB5",
+                        'position': role['position'],
+                        'managed': role['managed'],
+                        'mentionable': role['mentionable'],
+                        'hoist': role['hoist']
+                    })
+        except Exception as role_error:
+            print(f"Error getting roles: {role_error}")
+            # Continue without roles if there's an error
 
         # Build role mappings response
         role_mappings = []
-        for level, role_ids in settings.roles.role_mappings.items():
-            roles = []
-            for role_id in role_ids:
-                # Find role in available roles
-                role_info = next((r for r in available_roles if r.id == role_id), None)
-                if role_info:
-                    roles.append(role_info.dict())
-                else:
-                    # Use cached role info
-                    cached_role = settings.roles.role_cache.get(role_id)
-                    if cached_role:
-                        roles.append({
-                            "id": role_id,
-                            "name": cached_role.name,
-                            "color": cached_role.color,
-                            "position": cached_role.position,
-                            "managed": cached_role.managed,
-                            "mentionable": True,
-                            "hoist": False
-                        })
+        if hasattr(settings, 'roles') and hasattr(settings.roles, 'role_mappings'):
+            for level, role_ids in settings.roles.role_mappings.items():
+                roles = []
+                for role_id in role_ids:
+                    # Find role in available roles
+                    role_info = next((r for r in available_roles if r['id'] == str(role_id)), None)
+                    if role_info:
+                        roles.append(role_info)
 
-            if roles:  # Only include levels that have valid roles
-                role_mappings.append({
-                    "level": int(level),
-                    "roles": roles
-                })
+                if roles:  # Only include levels that have valid roles
+                    role_mappings.append({
+                        "level": int(level),
+                        "roles": roles
+                    })
 
+        # Build response
         response_data = {
             "guild_id": guild_id,
             "guild_name": guild_info["name"],
-            "settings": settings.dict(),
-            "available_roles": [role.dict() for role in available_roles],
-            "available_channels": [channel.dict() for channel in available_channels],
-            "role_mappings": role_mappings
+            "settings": settings.dict() if hasattr(settings, 'dict') else {},
+            "available_roles": available_roles,
+            "available_channels": available_channels,
+            "role_mappings": role_mappings,
+            "permissions": {
+                "method": "hybrid_http_api",
+                "has_admin": True
+            }
         }
 
         return jsonify({
@@ -371,11 +766,14 @@ def get_guild_config(guild_id):
         })
 
     except Exception as e:
-        print(f"Error getting guild config: {e}")
+        print(f"Error in hybrid config: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({
             "success": False,
-            "message": "Failed to get guild configuration",
-            "error": str(e)
+            "message": "Internal server error",
+            "error": str(e),
+            "traceback": traceback.format_exc()
         }), 500
 
 
@@ -1213,12 +1611,393 @@ def validate_test_token():
         return jsonify({'error': 'Invalid token', 'valid': False}), 401
 
 
-if __name__ == '__main__':
-    # Initialize Discord client on startup
+@app.route('/api/guilds/<guild_id>/roles-live', methods=['GET'])
+@require_auth
+def get_guild_roles_live(guild_id):
+    """Get live guild roles from Discord API"""
     try:
-        run_async(initialize_discord_client())
-        print("Discord API client initialized")
-    except Exception as e:
-        print(f"Failed to initialize Discord client: {e}")
+        # Check permissions using REST client
+        has_permission = run_async_rest(
+            discord_rest_client.check_user_permissions(guild_id, request.user_id)
+        )
 
+        if not has_permission:
+            return jsonify({
+                "success": False,
+                "message": "You don't have permission to view this server's roles"
+            }), 403
+
+        # Get live roles data
+        roles_data = run_async_rest(discord_rest_client.get_guild_roles(guild_id))
+
+        # Filter and format roles
+        formatted_roles = []
+        for role in roles_data:
+            if role['name'] != '@everyone' and not role.get('managed', False):
+                formatted_roles.append({
+                    "id": role['id'],
+                    "name": role['name'],
+                    "color": f"#{role['color']:06x}" if role['color'] != 0 else "#99AAB5",
+                    "position": role['position'],
+                    "permissions": role['permissions'],
+                    "managed": role.get('managed', False),
+                    "mentionable": role.get('mentionable', True),
+                    "hoist": role.get('hoist', False)
+                })
+
+        return jsonify({
+            "success": True,
+            "roles": formatted_roles,
+            "source": "discord_rest_api"
+        })
+
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "success": False,
+            "message": "Failed to get live roles",
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+
+@app.route('/api/guilds/<guild_id>/channels-live', methods=['GET'])
+@require_auth
+def get_guild_channels_live(guild_id):
+    """Get live guild channels from Discord API"""
+    try:
+        # Check permissions
+        has_permission = run_async_rest(
+            discord_rest_client.check_user_permissions(guild_id, request.user_id)
+        )
+
+        if not has_permission:
+            return jsonify({
+                "success": False,
+                "message": "You don't have permission to view this server's channels"
+            }), 403
+
+        # Get live channels data
+        channels_data = run_async_rest(discord_rest_client.get_guild_channels(guild_id))
+
+        # Filter and format text channels
+        text_channels = []
+        for channel in channels_data:
+            if channel.get('type') == 0:  # TEXT_CHANNEL
+                text_channels.append({
+                    "id": channel['id'],
+                    "name": channel['name'],
+                    "type": "text",
+                    "position": channel.get('position', 0),
+                    "category_id": channel.get('parent_id'),
+                    "nsfw": channel.get('nsfw', False)
+                })
+
+        return jsonify({
+            "success": True,
+            "channels": text_channels,
+            "source": "discord_rest_api"
+        })
+
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "success": False,
+            "message": "Failed to get live channels",
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+
+
+
+# Add this to your app.py file as a temporary debug endpoint
+
+@app.route('/api/debug/permissions/<guild_id>', methods=['GET'])
+@require_auth
+def debug_user_permissions(guild_id):
+    """Debug endpoint to see what's happening with permission checks"""
+    try:
+        debug_info = {
+            "user_id": request.user_id,
+            "guild_id": guild_id,
+            "timestamp": datetime.now().isoformat()
+        }
+
+        # Test 1: Check if we can get guild info
+        try:
+            guild_info = get_guild_info_sync(guild_id)
+            debug_info["guild_info"] = {
+                "found": guild_info is not None,
+                "data": guild_info if guild_info else "Guild not found"
+            }
+
+            if guild_info:
+                debug_info["is_owner"] = guild_info.get('owner_id') == request.user_id
+        except Exception as e:
+            debug_info["guild_info_error"] = str(e)
+
+        # Test 2: Check database for guild membership
+        try:
+            from Dao.GuildUserDao import GuildUserDao
+            guild_user_dao = GuildUserDao()
+            guild_user = guild_user_dao.get_guild_user(int(request.user_id), int(guild_id))
+            debug_info["database_membership"] = {
+                "found": guild_user is not None,
+                "is_active": guild_user.is_active if guild_user else False
+            }
+        except Exception as e:
+            debug_info["database_error"] = str(e)
+
+        # Test 3: Try the actual permission check and catch any errors
+        try:
+            has_admin = check_guild_admin_permissions_sync(request.user_id, guild_id)
+            debug_info["permission_check"] = {
+                "has_admin": has_admin,
+                "check_completed": True
+            }
+        except Exception as e:
+            debug_info["permission_check_error"] = str(e)
+            import traceback
+            debug_info["permission_check_traceback"] = traceback.format_exc()
+
+        # Test 4: Check if guild exists in our database
+        try:
+            from Dao.GuildDao import GuildDao
+            guild_dao = GuildDao()
+            guild_record = guild_dao.get_guild(int(guild_id))
+            debug_info["guild_in_database"] = {
+                "found": guild_record is not None,
+                "active": guild_record.active if guild_record else False,
+                "name": guild_record.name if guild_record else None
+            }
+        except Exception as e:
+            debug_info["guild_database_error"] = str(e)
+
+        # Test 5: Try HTTP API approach if available
+        # try:
+        #     # This would only work if the HTTP client is implemented
+        #     from discord_integration import discord_http_api
+        #     if hasattr(discord_http_api, 'get_guild_member'):
+        #         member_data = discord_http_api.get_guild_member(guild_id, request.user_id)
+        #         debug_info["http_member_check"] = {
+        #             "found": member_data is not None,
+        #             "data": member_data if member_data else "Member not found"
+        #         }
+        # except Exception as e:
+        #     debug_info["http_api_error"] = str(e)
+            # Test 5: Skip HTTP API test for now
+            debug_info["http_api_note"] = "HTTP API test skipped - Discord API not available"
+
+        return jsonify({
+            "success": True,
+            "debug_info": debug_info
+        })
+
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+
+# Add this debug endpoint to see what's actually happening
+@app.route('/api/debug/guild-lookup/<guild_id>', methods=['GET'])
+@require_auth
+def debug_guild_lookup(guild_id):
+    """Debug the actual guild database lookup"""
+    try:
+        from Dao.GuildDao import GuildDao
+        guild_dao = GuildDao()
+
+        debug_info = {}
+
+        # Try different methods that might exist
+        methods_to_try = ['get_guild', 'find_by_id', 'get_by_id', 'find_guild']
+
+        for method_name in methods_to_try:
+            if hasattr(guild_dao, method_name):
+                try:
+                    method = getattr(guild_dao, method_name)
+                    result = method(int(guild_id))
+                    debug_info[method_name] = {
+                        "exists": True,
+                        "result": str(result),
+                        "result_type": type(result).__name__,
+                        "is_none": result is None,
+                        "has_active_attr": hasattr(result, 'active') if result else False,
+                        "active_value": getattr(result, 'active', 'N/A') if result and hasattr(result,
+                                                                                               'active') else 'N/A'
+                    }
+                except Exception as e:
+                    debug_info[method_name] = {
+                        "exists": True,
+                        "error": str(e)
+                    }
+            else:
+                debug_info[method_name] = {"exists": False}
+
+        # Also try a direct SQL query
+        try:
+            sql = "SELECT * FROM Guilds WHERE id = %s"
+            results = guild_dao.execute_query(sql, (int(guild_id),))
+            debug_info["direct_sql"] = {
+                "found": len(results) > 0,
+                "results": results[0] if results else None
+            }
+        except Exception as e:
+            debug_info["direct_sql_error"] = str(e)
+
+        return jsonify({
+            "success": True,
+            "guild_id": guild_id,
+            "debug_info": debug_info
+        })
+
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        })
+
+# Alternative: Bypass permission check temporarily for testing
+# @app.route('/api/guilds/<guild_id>/config-debug', methods=['GET'])
+# @require_auth
+# def get_guild_config_debug(guild_id):
+#     """Temporary debug version that bypasses permission check"""
+#     try:
+#         debug_info = {
+#             "bypassed_permission_check": True,
+#             "user_id": request.user_id,
+#             "guild_id": guild_id
+#         }
+#
+#         # Get guild info without permission check
+#         guild_info = get_guild_info_sync(guild_id)
+#         if not guild_info:
+#             return jsonify({
+#                 "success": False,
+#                 "message": "Guild not found",
+#                 "error_code": "guild_not_found",
+#                 "debug_info": debug_info
+#             }), 404
+#
+#         # Get settings
+#         settings_manager = get_settings_manager()
+#         settings = settings_manager.get_guild_settings(guild_id)
+#
+#         # Get Discord data
+#         try:
+#             available_roles, available_channels = get_discord_guild_data_sync(guild_id)
+#             debug_info["discord_data"] = {
+#                 "roles_count": len(available_roles),
+#                 "channels_count": len(available_channels)
+#             }
+#         except Exception as e:
+#             debug_info["discord_data_error"] = str(e)
+#             available_roles, available_channels = [], []
+#
+#         # Build response
+#         config_data = {
+#             "guild_id": guild_id,
+#             "guild_name": guild_info.get("name", "Unknown"),
+#             "member_count": guild_info.get("member_count", 0),
+#             "owner_id": guild_info.get("owner_id"),
+#             "settings": {
+#                 "leveling": {
+#                     "enabled": settings.leveling.enabled,
+#                     "exp_per_message": settings.leveling.exp_per_message,
+#                     "exp_per_reaction": settings.leveling.exp_per_reaction,
+#                     "level_up_announcement": settings.leveling.level_up_announcement,
+#                     "announcement_channel": settings.leveling.announcement_channel_id
+#                 },
+#                 "roles": {
+#                     "auto_assign_enabled": settings.roles.auto_assign_enabled,
+#                     "role_mappings": dict(settings.roles.role_mappings)
+#                 }
+#             },
+#             "available_roles": [role.dict() for role in available_roles],
+#             "available_channels": [channel.dict() for channel in available_channels],
+#             "debug_info": debug_info
+#         }
+#
+#         return jsonify({
+#             "success": True,
+#             "data": config_data
+#         })
+#
+#     except Exception as e:
+#         import traceback
+#         return jsonify({
+#             "success": False,
+#             "message": "Internal server error",
+#             "error": str(e),
+#             "traceback": traceback.format_exc(),
+#             "debug_info": debug_info
+#         }), 500
+
+
+from discord_integration import check_admin_sync, get_channels_sync, list_guilds_sync
+
+@app.route('/api/simple-test/<guild_id>', methods=['GET'])
+@require_auth
+def simple_test(guild_id):
+    """Super simple test endpoint"""
+    try:
+        print(f"Testing for user {request.user_id} in guild {guild_id}")
+
+        # Check if user is admin
+        is_admin = check_admin_sync(request.user_id, guild_id)
+        print(f"Is admin: {is_admin}")
+
+        if not is_admin:
+            return jsonify({
+                "success": False,
+                "message": "You are not an admin in this server"
+            }), 403
+
+        # Get channels
+        channels = get_channels_sync(guild_id)
+        print(f"Found {len(channels)} channels")
+
+        return jsonify({
+            "success": True,
+            "is_admin": is_admin,
+            "channels": channels,
+            "channel_count": len(channels)
+        })
+
+    except Exception as e:
+        print(f"Error in simple test: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@app.route('/api/debug/guilds', methods=['GET'])
+def debug_guilds():
+    """Debug endpoint to see what guilds the bot is in"""
+    try:
+        guilds = list_guilds_sync()
+        return jsonify({
+            "success": True,
+            "guilds": guilds,
+            "count": len(guilds)
+        })
+    except Exception as e:
+        print(f"Error listing guilds: {e}")
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+if __name__ == '__main__':
+    print("Starting Flask app...")
     app.run(host='0.0.0.0', port=5000, debug=True)

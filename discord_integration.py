@@ -1,287 +1,204 @@
-import discord
 import asyncio
+import aiohttp
 import os
-from typing import List, Tuple, Optional
-from models.discord_models import DiscordRole, GuildChannelInfo, ChannelType
 from dotenv import load_dotenv
 
 load_dotenv()
 
 
-class DiscordAPIClient:
-    """Discord API client for the web API"""
-
+class SimpleDiscordHTTPClient:
     def __init__(self):
         self.bot_token = os.getenv('DISCORD_BOT_TOKEN')
-        self.client = None
-        self._loop = None
+        self.base_url = "https://discord.com/api/v10"
+        self.headers = {
+            "Authorization": f"Bot {self.bot_token}",
+            "Content-Type": "application/json"
+        }
 
-    async def initialize(self):
-        """Initialize the Discord client"""
-        if self.client is None:
-            intents = discord.Intents.default()
-            intents.guilds = True
-            intents.members = True  # Needed for permission checking
-
-            self.client = discord.Client(intents=intents)
-
-            @self.client.event
-            async def on_ready():
-                print(f'Discord API client ready as {self.client.user}')
-
-            # Start the client
-            await self.client.login(self.bot_token)
-            # Don't call connect() as we're using this for API calls only
-
-    async def get_guild_data(self, guild_id: str) -> Tuple[List[DiscordRole], List[GuildChannelInfo]]:
-        """Get guild roles and channels"""
-        try:
-            if self.client is None:
-                await self.initialize()
-
-            guild = self.client.get_guild(int(guild_id))
-            if not guild:
-                print(f"Guild {guild_id} not found")
-                return [], []
-
-            # Get roles (excluding @everyone and managed roles for assignment)
-            roles = []
-            for role in guild.roles:
-                if role.name != "@everyone":  # Include all roles for display
-                    roles.append(DiscordRole(
-                        id=str(role.id),
-                        name=role.name,
-                        color=f"#{role.color.value:06x}" if role.color.value != 0 else "#99AAB5",
-                        position=role.position,
-                        permissions=str(role.permissions.value),
-                        managed=role.managed,
-                        mentionable=role.mentionable,
-                        hoist=role.hoist
-                    ))
-
-            # Get text channels
-            channels = []
-            for channel in guild.channels:
-                if isinstance(channel, discord.TextChannel):
-                    channel_type = ChannelType.TEXT
-                elif isinstance(channel, discord.VoiceChannel):
-                    channel_type = ChannelType.VOICE
-                elif isinstance(channel, discord.CategoryChannel):
-                    channel_type = ChannelType.CATEGORY
-                elif hasattr(discord, 'ForumChannel') and isinstance(channel, discord.ForumChannel):
-                    channel_type = ChannelType.FORUM
-                elif hasattr(discord, 'StageChannel') and isinstance(channel, discord.StageChannel):
-                    channel_type = ChannelType.STAGE
-                else:
-                    continue  # Skip unknown channel types
-
-                # Get category info
-                category_name = None
-                category_id = None
-                if hasattr(channel, 'category') and channel.category:
-                    category_name = channel.category.name
-                    category_id = str(channel.category.id)
-
-                channels.append(GuildChannelInfo(
-                    id=str(channel.id),
-                    name=channel.name,
-                    type=channel_type,
-                    position=channel.position,
-                    category_id=category_id,
-                    category_name=category_name,
-                    nsfw=getattr(channel, 'nsfw', False)
-                ))
-
-            return roles, channels
-
-        except Exception as e:
-            print(f"Error getting guild data: {e}")
-            return [], []
-
-    async def check_user_permissions(self, user_id: str, guild_id: str) -> bool:
-        """Check if user has admin permissions in guild"""
-        try:
-            if self.client is None:
-                await self.initialize()
-
-            guild = self.client.get_guild(int(guild_id))
-            if not guild:
-                return False
-
-            member = guild.get_member(int(user_id))
-            if not member:
-                return False
-
-            # Check if user is guild owner
-            if member.id == guild.owner_id:
-                return True
-
-            # Check if user has administrator permission
-            if member.guild_permissions.administrator:
-                return True
-
-            # Check if user has manage_guild permission (also sufficient)
-            if member.guild_permissions.manage_guild:
-                return True
-
-            return False
-
-        except Exception as e:
-            print(f"Error checking user permissions: {e}")
-            return False
-
-    async def get_guild_info(self, guild_id: str) -> Optional[dict]:
-        """Get basic guild information"""
-        try:
-            if self.client is None:
-                await self.initialize()
-
-            guild = self.client.get_guild(int(guild_id))
-            if not guild:
+    async def get_guild_info(self, guild_id: str):
+        """Get guild info via HTTP API"""
+        async with aiohttp.ClientSession() as session:
+            try:
+                url = f"{self.base_url}/guilds/{guild_id}"
+                async with session.get(url, headers=self.headers) as response:
+                    if response.status == 200:
+                        return await response.json()
+                    else:
+                        print(f"Failed to get guild {guild_id}: {response.status}")
+                        return None
+            except Exception as e:
+                print(f"Error getting guild info: {e}")
                 return None
 
-            return {
-                "id": str(guild.id),
-                "name": guild.name,
-                "icon": guild.icon.key if guild.icon else None,
-                "owner_id": str(guild.owner_id),
-                "member_count": guild.member_count,
-                "premium_tier": guild.premium_tier,
-                "features": guild.features
-            }
-
-        except Exception as e:
-            print(f"Error getting guild info: {e}")
-            return None
-
-    async def get_user_guilds(self, user_id: str) -> List[dict]:
-        """Get guilds where user has admin permissions"""
-        try:
-            if self.client is None:
-                await self.initialize()
-
-            print(f"Discord client user: {self.client.user}")
-            print(f"Bot is in {len(self.client.guilds)} guilds")
-
-            user_guilds = []
-
-            # Check all guilds the bot is in
-            for guild in self.client.guilds:
-                print(f"Checking guild: {guild.name} (ID: {guild.id})")
-                member = guild.get_member(int(user_id))
-                if member:
-                    print(f"  User found in {guild.name}")
-                    print(f"  User permissions: {member.guild_permissions}")
-                    print(f"  Is owner: {member.id == guild.owner_id}")
-                    print(f"  Has admin: {member.guild_permissions.administrator}")
-                    print(f"  Has manage_guild: {member.guild_permissions.manage_guild}")
-
-                    # Check if user has admin permissions
-                    if (member.id == guild.owner_id or
-                            member.guild_permissions.administrator or
-                            member.guild_permissions.manage_guild):
-
-                        print(f"  ✓ User has admin permissions in {guild.name}")
-                        user_guilds.append({
-                            "id": str(guild.id),
-                            "name": guild.name,
-                            "icon": guild.icon.key if guild.icon else None,
-                            "owner": member.id == guild.owner_id,
-                            "permissions": ["administrator"] if member.guild_permissions.administrator else [
-                                "manage_guild"]
-                        })
+    async def get_guild_member(self, guild_id: str, user_id: str):
+        """Get guild member info via HTTP API"""
+        async with aiohttp.ClientSession() as session:
+            try:
+                url = f"{self.base_url}/guilds/{guild_id}/members/{user_id}"
+                async with session.get(url, headers=self.headers) as response:
+                    if response.status == 200:
+                        return await response.json()
                     else:
-                        print(f"  ✗ User lacks admin permissions in {guild.name}")
-                else:
-                    print(f"  User not found in {guild.name}")
+                        print(f"Failed to get member {user_id} in guild {guild_id}: {response.status}")
+                        return None
+            except Exception as e:
+                print(f"Error getting member info: {e}")
+                return None
 
-            print(f"Final result: {len(user_guilds)} guilds with admin access")
-            return user_guilds
+    async def get_guild_channels(self, guild_id: str):
+        """Get guild channels via HTTP API"""
+        async with aiohttp.ClientSession() as session:
+            try:
+                url = f"{self.base_url}/guilds/{guild_id}/channels"
+                async with session.get(url, headers=self.headers) as response:
+                    if response.status == 200:
+                        return await response.json()
+                    else:
+                        print(f"Failed to get channels for guild {guild_id}: {response.status}")
+                        return []
+            except Exception as e:
+                print(f"Error getting channels: {e}")
+                return []
+
+    async def get_guild_roles(self, guild_id: str):
+        """Get guild roles via HTTP API"""
+        async with aiohttp.ClientSession() as session:
+            try:
+                url = f"{self.base_url}/guilds/{guild_id}/roles"
+                async with session.get(url, headers=self.headers) as response:
+                    if response.status == 200:
+                        return await response.json()
+                    else:
+                        print(f"Failed to get roles for guild {guild_id}: {response.status}")
+                        return []
+            except Exception as e:
+                print(f"Error getting roles: {e}")
+                return []
+
+    async def list_bot_guilds(self):
+        """List all guilds the bot is in via HTTP API"""
+        async with aiohttp.ClientSession() as session:
+            try:
+                url = f"{self.base_url}/users/@me/guilds"
+                async with session.get(url, headers=self.headers) as response:
+                    if response.status == 200:
+                        return await response.json()
+                    else:
+                        print(f"Failed to get bot guilds: {response.status}")
+                        return []
+            except Exception as e:
+                print(f"Error listing guilds: {e}")
+                return []
+
+    async def check_admin(self, user_id: str, guild_id: str):
+        """Check if user has admin permissions"""
+        try:
+            # Get guild info
+            guild = await self.get_guild_info(guild_id)
+            if not guild:
+                print(f"Guild {guild_id} not found or bot not in guild")
+                return False
+
+            print(f"Guild found: {guild['name']}, Owner: {guild['owner_id']}")
+
+            # Check if user is guild owner
+            if str(guild['owner_id']) == str(user_id):
+                print(f"User {user_id} is owner of guild {guild_id}")
+                return True
+
+            # Get member info
+            member = await self.get_guild_member(guild_id, user_id)
+            if not member:
+                print(f"User {user_id} not found in guild {guild_id}")
+                return False
+
+            # Check permissions
+            permissions = int(member.get('permissions', '0'))
+
+            # Administrator permission bit is 0x8 (bit 3)
+            has_admin = bool(permissions & 0x8)
+            # Manage guild permission bit is 0x20 (bit 5)
+            has_manage_guild = bool(permissions & 0x20)
+
+            print(f"User permissions: {permissions}")
+            print(f"Has admin: {has_admin}, Has manage guild: {has_manage_guild}")
+
+            return has_admin or has_manage_guild
 
         except Exception as e:
-            print(f"Error getting user guilds: {e}")
+            print(f"Error checking admin: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    async def get_channels(self, guild_id: str):
+        """Get text channels for guild"""
+        try:
+            channels_data = await self.get_guild_channels(guild_id)
+
+            channels = []
+            for channel in channels_data:
+                # Type 0 = text channel
+                if channel.get('type') == 0:
+                    channels.append({
+                        'id': str(channel['id']),
+                        'name': channel['name'],
+                        'type': 'text'
+                    })
+
+            return channels
+
+        except Exception as e:
+            print(f"Error getting channels: {e}")
+            return []
+
+    async def list_all_guilds(self):
+        """List all guilds bot is in"""
+        try:
+            guilds_data = await self.list_bot_guilds()
+
+            guilds = []
+            print(f"Bot is in {len(guilds_data)} guilds:")
+            for guild in guilds_data:
+                guild_info = {
+                    'id': str(guild['id']),
+                    'name': guild['name'],
+                    'owner_id': str(guild.get('owner_id', 'unknown')),
+                    'permissions': guild.get('permissions', '0')
+                }
+                guilds.append(guild_info)
+                print(f"  - {guild['name']} (ID: {guild['id']}, Owner: {guild.get('owner_id', 'unknown')})")
+
+            return guilds
+
+        except Exception as e:
+            print(f"Error listing guilds: {e}")
             import traceback
             traceback.print_exc()
             return []
 
-    async def close(self):
-        """Close the Discord client"""
-        if self.client:
-            await self.client.close()
+
+# Global client instance
+http_client = SimpleDiscordHTTPClient()
 
 
-# Global instance
-discord_api = DiscordAPIClient()
-
-
-# Async wrapper functions for use in your Flask app
-def run_async(coro):
-    """Run async function in Flask app"""
+def run_sync(coro):
+    """Run async function synchronously"""
     try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-
-    if loop.is_running():
-        # If loop is already running, use asyncio.create_task
-        import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            future = executor.submit(asyncio.run, coro)
-            return future.result()
-    else:
         return loop.run_until_complete(coro)
+    finally:
+        loop.close()
 
 
-# Updated functions for your Flask app
-async def check_guild_admin_permissions(user_id: str, guild_id: str) -> bool:
-    """Check if user has admin permissions in the guild"""
-    return await discord_api.check_user_permissions(user_id, guild_id)
+def check_admin_sync(user_id: str, guild_id: str):
+    return run_sync(http_client.check_admin(user_id, guild_id))
 
 
-async def get_discord_guild_data(guild_id: str) -> Tuple[List[DiscordRole], List[GuildChannelInfo]]:
-    """Get Discord guild roles and channels"""
-    return await discord_api.get_guild_data(guild_id)
+def get_channels_sync(guild_id: str):
+    return run_sync(http_client.get_channels(guild_id))
 
 
-async def get_guild_info(guild_id: str) -> Optional[dict]:
-    """Get guild information"""
-    return await discord_api.get_guild_info(guild_id)
-
-
-async def get_user_manageable_guilds(user_id: str) -> List[dict]:
-    """Get guilds the user can manage"""
-    return await discord_api.get_user_guilds(user_id)
-
-
-# Sync wrapper functions for Flask (since Flask doesn't handle async well)
-def check_guild_admin_permissions_sync(user_id: str, guild_id: str) -> bool:
-    """Sync wrapper for guild admin check"""
-    return run_async(check_guild_admin_permissions(user_id, guild_id))
-
-
-def get_discord_guild_data_sync(guild_id: str) -> Tuple[List[DiscordRole], List[GuildChannelInfo]]:
-    """Sync wrapper for getting guild data"""
-    return run_async(get_discord_guild_data(guild_id))
-
-
-def get_guild_info_sync(guild_id: str) -> Optional[dict]:
-    """Sync wrapper for getting guild info"""
-    return run_async(get_guild_info(guild_id))
-
-
-def get_user_manageable_guilds_sync(user_id: str) -> List[dict]:
-    """Sync wrapper for getting user guilds"""
-    return run_async(get_user_manageable_guilds(user_id))
-
-
-# Initialize on app startup
-async def initialize_discord_client():
-    """Initialize the Discord client on app startup"""
-    await discord_api.initialize()
-
-
-# Cleanup on app shutdown
-async def cleanup_discord_client():
-    """Cleanup Discord client on app shutdown"""
-    await discord_api.close()
+def list_guilds_sync():
+    return run_sync(http_client.list_all_guilds())
