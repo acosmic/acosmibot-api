@@ -8,6 +8,8 @@ import jwt
 import os
 import atexit
 import asyncio
+from discord_integration import check_admin_sync, get_channels_sync, list_guilds_sync, http_client, run_sync
+
 
 # Set up path to bot project
 current_dir = Path(__file__).parent
@@ -57,7 +59,7 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app, origins=['https://acosmibot.com'])
+CORS(app, origins=['https://acosmibot.com', 'https://api.acosmibot.com'], supports_credentials=True)
 app.secret_key = os.getenv('JWT_SECRET')
 
 oauth_service = DiscordOAuthService()
@@ -659,120 +661,6 @@ def get_user_guilds():
 #             "message": "Failed to get guild configuration",
 #             "error": str(e)
 #         }), 500
-
-
-from discord_integration import check_admin_sync, get_channels_sync, list_guilds_sync, http_client, run_sync
-
-@app.route('/api/guilds/<guild_id>/config-hybrid', methods=['GET'])
-@require_auth
-def get_guild_config_hybrid(guild_id):
-    """Get guild configuration using hybrid approach (database + live Discord data)"""
-    try:
-        print(f"Hybrid config request for user {request.user_id} in guild {guild_id}")
-
-        # Check permissions using our working HTTP client
-        has_admin = check_admin_sync(request.user_id, guild_id)
-        if not has_admin:
-            return jsonify({
-                "success": False,
-                "message": "You don't have permission to manage this server"
-            }), 403
-
-        print("Permission check passed")
-
-        # Get guild info from Discord HTTP API
-        guild_info = run_sync(http_client.get_guild_info(guild_id))
-        if not guild_info:
-            return jsonify({
-                "success": False,
-                "message": "Guild not found"
-            }), 404
-
-        # Get settings from database
-        try:
-            settings_manager = get_settings_manager()
-            settings = settings_manager.get_guild_settings(guild_id)
-        except Exception as settings_error:
-            print(f"Error getting settings: {settings_error}")
-            # Create default settings if there's an error
-            settings = type('DefaultSettings', (), {
-                'dict': lambda: {
-                    'leveling': {'enabled': True, 'announcement_channel_id': None},
-                    'roles': {'enabled': True, 'mode': 'auto'},
-                    'economy': {'enabled': True}
-                },
-                'roles': type('DefaultRoles', (), {'role_mappings': {}})
-            })()
-
-        # Get live Discord data using our working HTTP client
-        available_roles = []
-        available_channels = get_channels_sync(guild_id)
-
-        # Get roles via HTTP API
-        try:
-            roles_data = run_sync(http_client.get_guild_roles(guild_id))
-            for role in roles_data:
-                if role['name'] != '@everyone':
-                    available_roles.append({
-                        'id': str(role['id']),
-                        'name': role['name'],
-                        'color': f"#{role['color']:06x}" if role['color'] != 0 else "#99AAB5",
-                        'position': role['position'],
-                        'managed': role['managed'],
-                        'mentionable': role['mentionable'],
-                        'hoist': role['hoist']
-                    })
-        except Exception as role_error:
-            print(f"Error getting roles: {role_error}")
-            # Continue without roles if there's an error
-
-        # Build role mappings response
-        role_mappings = []
-        if hasattr(settings, 'roles') and hasattr(settings.roles, 'role_mappings'):
-            for level, role_ids in settings.roles.role_mappings.items():
-                roles = []
-                for role_id in role_ids:
-                    # Find role in available roles
-                    role_info = next((r for r in available_roles if r['id'] == str(role_id)), None)
-                    if role_info:
-                        roles.append(role_info)
-
-                if roles:  # Only include levels that have valid roles
-                    role_mappings.append({
-                        "level": int(level),
-                        "roles": roles
-                    })
-
-        # Build response
-        response_data = {
-            "guild_id": guild_id,
-            "guild_name": guild_info["name"],
-            "settings": settings.dict() if hasattr(settings, 'dict') else {},
-            "available_roles": available_roles,
-            "available_channels": available_channels,
-            "role_mappings": role_mappings,
-            "permissions": {
-                "method": "hybrid_http_api",
-                "has_admin": True
-            }
-        }
-
-        return jsonify({
-            "success": True,
-            "data": response_data
-        })
-
-    except Exception as e:
-        print(f"Error in hybrid config: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({
-            "success": False,
-            "message": "Internal server error",
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
-
 
 @app.route('/api/guilds/<guild_id>/leveling', methods=['PUT'])
 @require_auth
@@ -1745,6 +1633,171 @@ def simple_test(guild_id):
             "error": str(e)
         }), 500
 
+
+@app.route('/api/guilds/<guild_id>/config-hybrid', methods=['GET'])
+@require_auth
+def get_guild_config_hybrid(guild_id):
+    """Get guild configuration using hybrid approach (database + live Discord data)"""
+    try:
+        print(f"Hybrid config request for user {request.user_id} in guild {guild_id}")
+
+        # Check permissions using our working HTTP client
+        has_admin = check_admin_sync(request.user_id, guild_id)
+        if not has_admin:
+            return jsonify({
+                "success": False,
+                "message": "You don't have permission to manage this server"
+            }), 403
+
+        print("Permission check passed")
+
+        # Get guild info from Discord HTTP API
+        guild_info = run_sync(http_client.get_guild_info(guild_id))
+        if not guild_info:
+            return jsonify({
+                "success": False,
+                "message": "Guild not found"
+            }), 404
+
+        # Get settings from database with fallbacks
+        try:
+            settings_manager = get_settings_manager()
+            settings = settings_manager.get_guild_settings(guild_id)
+        except Exception as settings_error:
+            print(f"Error getting settings: {settings_error}")
+            # Create default settings if there's an error
+            settings = type('DefaultSettings', (), {
+                'dict': lambda: {
+                    'leveling': {
+                        'enabled': True,
+                        'exp_per_message': 15,
+                        'exp_cooldown_seconds': 60,
+                        'level_up_announcements': True,
+                        'announcement_channel_id': None
+                    },
+                    'roles': {
+                        'enabled': True,
+                        'mode': 'progressive',
+                        'role_announcement': True
+                    },
+                    'economy': {
+                        'enabled': True,
+                        'daily_bonus': 100,
+                        'gambling_enabled': True
+                    }
+                },
+                'roles': type('DefaultRoles', (), {'role_mappings': {}})
+            })()
+
+        # Ensure all required settings sections exist
+        settings_dict = settings.dict() if hasattr(settings, 'dict') else {}
+
+        # Add missing economy section if it doesn't exist
+        if 'economy' not in settings_dict:
+            settings_dict['economy'] = {
+                'enabled': True,
+                'daily_bonus': 100,
+                'gambling_enabled': True
+            }
+
+        # Ensure leveling has all required fields
+        if 'leveling' not in settings_dict:
+            settings_dict['leveling'] = {}
+
+        leveling_defaults = {
+            'enabled': True,
+            'exp_per_message': 15,
+            'exp_cooldown_seconds': 60,
+            'level_up_announcements': True,
+            'announcement_channel_id': None
+        }
+
+        for key, default_value in leveling_defaults.items():
+            if key not in settings_dict['leveling']:
+                settings_dict['leveling'][key] = default_value
+
+        # Ensure roles has all required fields
+        if 'roles' not in settings_dict:
+            settings_dict['roles'] = {}
+
+        role_defaults = {
+            'enabled': False,
+            'mode': 'progressive',
+            'role_announcement': True
+        }
+
+        for key, default_value in role_defaults.items():
+            if key not in settings_dict['roles']:
+                settings_dict['roles'][key] = default_value
+
+        # Get live Discord data using our working HTTP client
+        available_roles = []
+        available_channels = get_channels_sync(guild_id)
+
+        # Get roles via HTTP API
+        try:
+            roles_data = run_sync(http_client.get_guild_roles(guild_id))
+            for role in roles_data:
+                if role['name'] != '@everyone':
+                    available_roles.append({
+                        'id': str(role['id']),
+                        'name': role['name'],
+                        'color': f"#{role['color']:06x}" if role['color'] != 0 else "#99AAB5",
+                        'position': role['position'],
+                        'managed': role['managed'],
+                        'mentionable': role['mentionable'],
+                        'hoist': role['hoist']
+                    })
+        except Exception as role_error:
+            print(f"Error getting roles: {role_error}")
+            # Continue without roles if there's an error
+
+        # Build role mappings response
+        role_mappings = []
+        if hasattr(settings, 'roles') and hasattr(settings.roles, 'role_mappings'):
+            for level, role_ids in settings.roles.role_mappings.items():
+                roles = []
+                for role_id in role_ids:
+                    # Find role in available roles
+                    role_info = next((r for r in available_roles if r['id'] == str(role_id)), None)
+                    if role_info:
+                        roles.append(role_info)
+
+                if roles:  # Only include levels that have valid roles
+                    role_mappings.append({
+                        "level": int(level),
+                        "roles": roles
+                    })
+
+        # Build response
+        response_data = {
+            "guild_id": guild_id,
+            "guild_name": guild_info["name"],
+            "settings": settings_dict,  # Use the properly formatted settings dict
+            "available_roles": available_roles,
+            "available_channels": available_channels,
+            "role_mappings": role_mappings,
+            "permissions": {
+                "method": "hybrid_http_api",
+                "has_admin": True
+            }
+        }
+
+        return jsonify({
+            "success": True,
+            "data": response_data
+        })
+
+    except Exception as e:
+        print(f"Error in hybrid config: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "success": False,
+            "message": "Internal server error",
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
 
 @app.route('/api/debug/guilds', methods=['GET'])
 def debug_guilds():
