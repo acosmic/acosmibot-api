@@ -75,6 +75,21 @@ class SimpleDiscordHTTPClient:
                 print(f"Error getting roles: {e}")
                 return []
 
+    async def get_guild_emojis(self, guild_id: str):
+        """Get guild emojis from Discord API"""
+        async with aiohttp.ClientSession() as session:
+            try:
+                url = f"{self.base_url}/guilds/{guild_id}/emojis"
+                async with session.get(url, headers=self.headers) as response:
+                    if response.status == 200:
+                        return await response.json()
+                    else:
+                        print(f"Error getting emojis: {response.status}")
+                        return []
+            except Exception as e:
+                print(f"Error getting emojis: {e}")
+                return []
+
     async def list_bot_guilds(self):
         """List all guilds the bot is in via HTTP API"""
         async with aiohttp.ClientSession() as session:
