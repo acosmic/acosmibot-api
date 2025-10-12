@@ -24,7 +24,7 @@ from models.settings_manager import SettingsManager
 from models.api_models import (
     UpdateLevelingSettingsRequest,
     UpdateRoleSettingsRequest,
-    UpdateEconomySettingsRequest,
+    # UpdateEconomySettingsRequest,
     UpdateAISettingsRequest,
     RoleMappingRequest,
     BulkRoleMappingRequest,
@@ -1734,7 +1734,7 @@ def update_guild_config_hybrid(guild_id):
         settings = data['settings']
 
         # Validate settings structure
-        required_sections = ['leveling', 'roles', 'economy','ai', 'games']
+        required_sections = ['leveling', 'roles', 'ai', 'games']
         for section in required_sections:
             if section not in settings:
                 return jsonify({
@@ -1749,7 +1749,9 @@ def update_guild_config_hybrid(guild_id):
             'exp_cooldown_seconds': int,
             'level_up_announcements': bool,
             'streak_multiplier': float,
-            'max_streak_bonus': int
+            'max_streak_bonus': int,
+            'daily_bonus': int,
+            'daily_announcements_enabled': bool
         }
 
         for field, field_type in leveling_required_fields.items():
@@ -1790,43 +1792,10 @@ def update_guild_config_hybrid(guild_id):
                 "message": "max_streak_bonus must be between 1 and 50"
             }), 400
 
-        # Validate economy settings
-        economy_required_fields = {
-            'enabled': bool,
-            'daily_bonus': int,
-            'gambling_enabled': bool
-        }
-
-        for field, field_type in economy_required_fields.items():
-            if field not in settings['economy']:
-                return jsonify({
-                    "success": False,
-                    "message": f"Missing required economy field: {field}"
-                }), 400
-
-            if not isinstance(settings['economy'][field], field_type):
-                return jsonify({
-                    "success": False,
-                    "message": f"Invalid type for economy.{field}, expected {field_type.__name__}"
-                }), 400
-
-        # Validate numeric ranges
-        if settings['leveling']['exp_per_message'] < 1 or settings['leveling']['exp_per_message'] > 100:
+        if settings['leveling']['daily_bonus'] < 100 or settings['leveling']['daily_bonus'] > 10000:
             return jsonify({
                 "success": False,
-                "message": "exp_per_message must be between 1 and 100"
-            }), 400
-
-        if settings['leveling']['exp_cooldown_seconds'] < 1 or settings['leveling']['exp_cooldown_seconds'] > 3600:
-            return jsonify({
-                "success": False,
-                "message": "exp_cooldown_seconds must be between 1 and 3600"
-            }), 400
-
-        if settings['economy']['daily_bonus'] < 1 or settings['economy']['daily_bonus'] > 10000:
-            return jsonify({
-                "success": False,
-                "message": "daily_bonus must be between 1 and 10000"
+                "message": "daily_bonus must be between 100 and 10000"
             }), 400
 
         # Validate roles mode
@@ -1980,71 +1949,6 @@ def update_guild_config_hybrid(guild_id):
             "message": "Internal server error",
             "error": str(e)
         }), 500
-
-# Add these endpoints to your app.py file
-
-@app.route('/api/guilds/<guild_id>/economy', methods=['PUT'])
-@require_auth
-def update_economy_settings(guild_id):
-    """Update economy settings"""
-    try:
-        # Check permissions
-        has_admin = check_admin_sync(request.user_id, guild_id)
-        if not has_admin:
-            return jsonify({
-                "success": False,
-                "message": "You don't have permission to manage this server"
-            }), 403
-
-        # Validate request data
-        try:
-            updates = UpdateEconomySettingsRequest(**request.json)
-        except Exception as e:
-            return jsonify({
-                "success": False,
-                "message": "Invalid request data",
-                "error": str(e)
-            }), 400
-
-        # Get current settings
-        settings_manager = get_settings_manager()
-        settings = settings_manager.get_guild_settings(guild_id)
-        settings_dict = settings.dict()
-
-        # Update economy settings
-        if 'economy' not in settings_dict:
-            settings_dict['economy'] = {}
-
-        settings_dict['economy'].update({
-            'enabled': updates.enabled,
-            'daily_bonus': updates.daily_bonus,
-            'gambling_enabled': updates.gambling_enabled,
-            'announcement_channel_id': updates.announcement_channel_id
-        })
-
-        # Save updated settings
-        success = settings_manager.guild_dao.update_guild_settings(int(guild_id), settings_dict)
-
-        if success:
-            return jsonify({
-                "success": True,
-                "message": "Economy settings updated successfully",
-                "data": settings_dict['economy']
-            })
-        else:
-            return jsonify({
-                "success": False,
-                "message": "Failed to update economy settings"
-            }), 500
-
-    except Exception as e:
-        print(f"Error updating economy settings: {e}")
-        return jsonify({
-            "success": False,
-            "message": "Internal server error",
-            "error": str(e)
-        }), 500
-
 
 @app.route('/api/guilds/<guild_id>/ai', methods=['PUT'])
 @require_auth
