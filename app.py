@@ -464,7 +464,7 @@ def get_user_guilds():
 
         # Query database for guilds this user is in
         sql = """
-              SELECT DISTINCT g.id, g.name, g.member_count, g.owner_id
+              SELECT DISTINCT g.id, g.name, g.owner_id
               FROM Guilds g
                        JOIN GuildUsers gu ON g.id = gu.guild_id
               WHERE gu.user_id = %s \
@@ -476,7 +476,10 @@ def get_user_guilds():
 
         if results:
             for row in results:
-                guild_id, guild_name, member_count, owner_id = row
+                guild_id, guild_name, owner_id = row
+
+                # Get real-time member count from GuildUsers table
+                member_count = guild_dao.get_active_member_count(guild_id)
                 is_owner = str(owner_id) == request.user_id
 
                 logger.info(f"Processing guild {guild_id} ({guild_name}): is_owner={is_owner}, user={request.user_id}, owner={owner_id}")
@@ -1148,23 +1151,37 @@ def get_user_game_stats(user_id):
         game_stats = games_dao.get_user_game_stats(user_id)
 
         if game_stats:
-            total_games = 0
-            total_wins = 0
-            total_losses = 0
+            # Use the pre-calculated 'total' stats from GamesDao
+            if 'total' in game_stats:
+                total_stats = game_stats['total']
+                return jsonify({
+                    'total_games': total_stats.get('total_games', 0),
+                    'wins': total_stats.get('wins', 0),
+                    'losses': total_stats.get('losses', 0),
+                    'win_rate': round(float(total_stats.get('win_rate', 0)), 1),
+                    'by_game_type': game_stats
+                })
+            else:
+                # Fallback: manually sum stats (skipping 'total' key to avoid double counting)
+                total_games = 0
+                total_wins = 0
+                total_losses = 0
 
-            for game_type, stats in game_stats.items():
-                if isinstance(stats, dict):
-                    total_games += stats.get('total_games', 0)
+                for game_type, stats in game_stats.items():
+                    if isinstance(stats, dict) and game_type != 'total':
+                        total_games += stats.get('total_games', 0)
+                        total_wins += stats.get('wins', 0)
+                        total_losses += stats.get('losses', 0)
 
-            win_rate = (total_wins / total_games * 100) if total_games > 0 else 0
+                win_rate = (total_wins / total_games * 100) if total_games > 0 else 0
 
-            return jsonify({
-                'total_games': total_games,
-                'wins': total_wins,
-                'losses': total_losses,
-                'win_rate': round(win_rate, 1),
-                'by_game_type': game_stats
-            })
+                return jsonify({
+                    'total_games': total_games,
+                    'wins': total_wins,
+                    'losses': total_losses,
+                    'win_rate': round(win_rate, 1),
+                    'by_game_type': game_stats
+                })
         else:
             return jsonify({
                 'total_games': 0,
