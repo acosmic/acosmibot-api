@@ -227,13 +227,21 @@ def get_current_user():
 @app.route('/api/guilds/<guild_id>/stats-db', methods=['GET'])
 @require_auth
 def get_guild_stats_db_only(guild_id):
-    """Get guild statistics using database-only approach"""
+    """Get guild statistics using database-only approach (accessible to all guild members)"""
     try:
         from Dao.GuildDao import GuildDao
         from Dao.GuildUserDao import GuildUserDao
 
         guild_dao = GuildDao()
         guild_user_dao = GuildUserDao()
+
+        # Check if user is a member of this guild
+        guild_user = guild_user_dao.get_guild_user(int(request.user_id), int(guild_id))
+        if not guild_user or not guild_user.is_active:
+            return jsonify({
+                "success": False,
+                "message": "You are not a member of this server"
+            }), 403
 
         # Get guild record
         guild_record = guild_dao.find_by_id(int(guild_id))
@@ -359,11 +367,22 @@ def get_guild_stats_db_only(guild_id):
 @app.route('/api/guilds/<guild_id>/leaderboard/messages-db', methods=['GET'])
 @require_auth
 def get_guild_messages_leaderboard_db(guild_id):
-    """Get messages leaderboard for a specific guild using database-only approach"""
+    """Get messages leaderboard for a specific guild using database-only approach (accessible to all guild members)"""
     try:
         from Dao.GuildDao import GuildDao
+        from Dao.GuildUserDao import GuildUserDao
 
         guild_dao = GuildDao()
+        guild_user_dao = GuildUserDao()
+
+        # Check if user is a member of this guild
+        guild_user = guild_user_dao.get_guild_user(int(request.user_id), int(guild_id))
+        if not guild_user or not guild_user.is_active:
+            return jsonify({
+                "success": False,
+                "message": "You are not a member of this server"
+            }), 403
+
         limit = min(int(request.args.get('limit', 10)), 50)
 
         # Direct SQL query for messages leaderboard
@@ -432,7 +451,7 @@ def get_guild_messages_leaderboard_db(guild_id):
 @app.route('/api/user/guilds', methods=['GET'])
 @require_auth
 def get_user_guilds():
-    """Get guilds from database instead of Discord API"""
+    """Get guilds from database with actual Discord permissions"""
     try:
         from Dao.GuildUserDao import GuildUserDao
         from Dao.GuildDao import GuildDao
@@ -460,12 +479,38 @@ def get_user_guilds():
                 guild_id, guild_name, member_count, owner_id = row
                 is_owner = str(owner_id) == request.user_id
 
+                logger.info(f"Processing guild {guild_id} ({guild_name}): is_owner={is_owner}, user={request.user_id}, owner={owner_id}")
+
+                # Check actual Discord permissions for non-owners
+                permissions = []
+                if is_owner:
+                    permissions = ["administrator"]
+                    logger.info(f"  -> User is owner, granting administrator permissions")
+                else:
+                    # Check if user has admin/manage server permission via Discord API
+                    logger.info(f"  -> User is NOT owner, checking Discord API permissions...")
+                    try:
+                        has_admin = check_admin_sync(request.user_id, str(guild_id))
+                        logger.info(f"  -> Discord API returned has_admin={has_admin}")
+                        if has_admin:
+                            permissions = ["administrator"]
+                            logger.info(f"  -> Granting administrator permissions")
+                        else:
+                            permissions = ["member"]
+                            logger.info(f"  -> Granting member permissions only")
+                    except Exception as e:
+                        logger.error(f"  -> Error checking permissions for guild {guild_id}: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        permissions = ["member"]  # Default to member if check fails
+                        logger.info(f"  -> Falling back to member permissions due to error")
+
                 user_guilds.append({
                     "id": str(guild_id),
                     "name": guild_name,
                     "member_count": member_count,
                     "owner": is_owner,
-                    "permissions": ["administrator"] if is_owner else ["member"]
+                    "permissions": permissions
                 })
 
         logger.info(f"Found {len(user_guilds)} guilds for user {request.user_id}")
@@ -1279,10 +1324,18 @@ def get_bot_invite():
 @app.route('/api/guilds/<guild_id>/leaderboard/level', methods=['GET'])
 @require_auth
 def get_guild_level_leaderboard(guild_id):
-    """Get level leaderboard for a specific guild"""
+    """Get level leaderboard for a specific guild (accessible to all guild members)"""
     try:
         from Dao.GuildUserDao import GuildUserDao
         guild_user_dao = GuildUserDao()
+
+        # Check if user is a member of this guild
+        guild_user = guild_user_dao.get_guild_user(int(request.user_id), int(guild_id))
+        if not guild_user or not guild_user.is_active:
+            return jsonify({
+                "success": False,
+                "message": "You are not a member of this server"
+            }), 403
 
         limit = min(int(request.args.get('limit', 10)), 50)
         top_users = guild_user_dao.get_top_users_by_guild_level(int(guild_id), limit)
@@ -1304,10 +1357,18 @@ def get_guild_level_leaderboard(guild_id):
 @app.route('/api/guilds/<guild_id>/leaderboard/messages', methods=['GET'])
 @require_auth
 def get_guild_messages_leaderboard(guild_id):
-    """Get messages leaderboard for a specific guild"""
+    """Get messages leaderboard for a specific guild (accessible to all guild members)"""
     try:
         from Dao.GuildUserDao import GuildUserDao
         guild_user_dao = GuildUserDao()
+
+        # Check if user is a member of this guild
+        guild_user = guild_user_dao.get_guild_user(int(request.user_id), int(guild_id))
+        if not guild_user or not guild_user.is_active:
+            return jsonify({
+                "success": False,
+                "message": "You are not a member of this server"
+            }), 403
 
         limit = min(int(request.args.get('limit', 10)), 50)
         top_users = guild_user_dao.get_top_users_by_messages_in_guild(int(guild_id), limit)
@@ -1329,10 +1390,18 @@ def get_guild_messages_leaderboard(guild_id):
 @app.route('/api/guilds/<guild_id>/user/<int:user_id>/stats', methods=['GET'])
 @require_auth
 def get_user_guild_stats(guild_id, user_id):
-    """Get specific user's stats in a guild"""
+    """Get specific user's stats in a guild (accessible to all guild members)"""
     try:
         from Dao.GuildUserDao import GuildUserDao
         guild_user_dao = GuildUserDao()
+
+        # Check if requesting user is a member of this guild
+        requesting_user = guild_user_dao.get_guild_user(int(request.user_id), int(guild_id))
+        if not requesting_user or not requesting_user.is_active:
+            return jsonify({
+                "success": False,
+                "message": "You are not a member of this server"
+            }), 403
 
         # Get user's stats in this guild
         guild_user = guild_user_dao.get_guild_user(user_id, int(guild_id))
@@ -1368,6 +1437,64 @@ def get_user_guild_stats(guild_id, user_id):
         return jsonify({
             "success": False,
             "message": "Failed to get user stats",
+            "error": str(e)
+        }), 500
+
+
+@app.route('/api/guilds/<guild_id>/permissions', methods=['GET'])
+@require_auth
+def get_user_guild_permissions(guild_id):
+    """Get user's permissions in a specific guild"""
+    try:
+        from Dao.GuildDao import GuildDao
+        from Dao.GuildUserDao import GuildUserDao
+
+        guild_dao = GuildDao()
+        guild_user_dao = GuildUserDao()
+
+        # Check if user is a member of this guild
+        guild_user = guild_user_dao.get_guild_user(int(request.user_id), int(guild_id))
+        if not guild_user or not guild_user.is_active:
+            return jsonify({
+                "success": False,
+                "message": "You are not a member of this server"
+            }), 403
+
+        # Get guild info to check ownership
+        guild = guild_dao.find_by_id(int(guild_id))
+        is_owner = guild and str(guild.owner_id) == request.user_id
+
+        # Check if user has admin permissions via Discord API
+        has_admin = False
+        try:
+            has_admin = check_admin_sync(request.user_id, guild_id)
+        except Exception as e:
+            # Log the actual error instead of silently catching
+            logger.error(f"Error checking admin for user {request.user_id} in guild {guild_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            # If Discord API check fails, fall back to owner status
+            has_admin = is_owner
+
+        permissions = {
+            "guild_id": guild_id,
+            "user_id": request.user_id,
+            "is_owner": is_owner,
+            "has_admin": has_admin or is_owner,
+            "can_configure_bot": has_admin or is_owner,
+            "can_view_stats": True  # All guild members can view stats
+        }
+
+        return jsonify({
+            "success": True,
+            "data": permissions
+        })
+
+    except Exception as e:
+        print(f"Error getting user permissions: {e}")
+        return jsonify({
+            "success": False,
+            "message": "Failed to get permissions",
             "error": str(e)
         }), 500
 

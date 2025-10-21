@@ -2,8 +2,11 @@ import asyncio
 import aiohttp
 import os
 from dotenv import load_dotenv
+import logging
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 
 class SimpleDiscordHTTPClient:
@@ -111,37 +114,53 @@ class SimpleDiscordHTTPClient:
             # Get guild info
             guild = await self.get_guild_info(guild_id)
             if not guild:
-                print(f"Guild {guild_id} not found or bot not in guild")
+                logger.warning(f"[check_admin] Guild {guild_id} not found or bot not in guild")
                 return False
 
-            print(f"Guild found: {guild['name']}, Owner: {guild['owner_id']}")
+            logger.info(f"[check_admin] Guild found: {guild['name']}, Owner: {guild['owner_id']}")
 
             # Check if user is guild owner
             if str(guild['owner_id']) == str(user_id):
-                print(f"User {user_id} is owner of guild {guild_id}")
+                logger.info(f"[check_admin] User {user_id} is owner of guild {guild_id}")
                 return True
 
             # Get member info
             member = await self.get_guild_member(guild_id, user_id)
             if not member:
-                print(f"User {user_id} not found in guild {guild_id}")
+                logger.warning(f"[check_admin] User {user_id} not found in guild {guild_id}")
                 return False
 
-            # Check permissions
-            permissions = int(member.get('permissions', '0'))
+            logger.info(f"[check_admin] Member has roles: {member.get('roles', [])}")
+
+            # Get guild roles to calculate permissions
+            guild_roles = await self.get_guild_roles(guild_id)
+            if not guild_roles:
+                logger.warning(f"[check_admin] Could not fetch guild roles for {guild_id}")
+                return False
+
+            # Calculate permissions from user's roles
+            user_role_ids = member.get('roles', [])
+            combined_permissions = 0
+
+            for role in guild_roles:
+                if str(role['id']) in user_role_ids or role['id'] in user_role_ids:
+                    role_perms = int(role.get('permissions', '0'))
+                    combined_permissions |= role_perms
+                    logger.info(f"[check_admin] Role '{role['name']}' (id: {role['id']}) has permissions: {role_perms} (binary: {bin(role_perms)})")
+
+            logger.info(f"[check_admin] Combined permissions: {combined_permissions} (binary: {bin(combined_permissions)})")
 
             # Administrator permission bit is 0x8 (bit 3)
-            has_admin = bool(permissions & 0x8)
+            has_admin = bool(combined_permissions & 0x8)
             # Manage guild permission bit is 0x20 (bit 5)
-            has_manage_guild = bool(permissions & 0x20)
+            has_manage_guild = bool(combined_permissions & 0x20)
 
-            print(f"User permissions: {permissions}")
-            print(f"Has admin: {has_admin}, Has manage guild: {has_manage_guild}")
+            logger.info(f"[check_admin] Has admin (0x8): {has_admin}, Has manage guild (0x20): {has_manage_guild}")
 
             return has_admin or has_manage_guild
 
         except Exception as e:
-            print(f"Error checking admin: {e}")
+            logger.error(f"[check_admin] Error checking admin: {e}")
             import traceback
             traceback.print_exc()
             return False
