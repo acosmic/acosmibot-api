@@ -480,9 +480,32 @@ def get_user_guilds():
 
                 # Get real-time member count from GuildUsers table
                 member_count = guild_dao.get_active_member_count(guild_id)
-                is_owner = str(owner_id) == request.user_id
 
-                logger.info(f"Processing guild {guild_id} ({guild_name}): is_owner={is_owner}, user={request.user_id}, owner={owner_id}")
+                # Get fresh owner info from Discord API to handle ownership transfers
+                guild_icon = None
+                guild_banner = None
+                try:
+                    guild_info = run_sync(http_client.get_guild_info(str(guild_id)))
+                    fresh_owner_id = guild_info.get('owner_id') if guild_info else None
+                    is_owner = str(fresh_owner_id) == request.user_id if fresh_owner_id else False
+
+                    # Extract icon and banner from Discord API
+                    guild_icon = guild_info.get('icon') if guild_info else None
+                    guild_banner = guild_info.get('banner') if guild_info else None
+
+                    # Update database if owner changed
+                    if fresh_owner_id and str(fresh_owner_id) != str(owner_id):
+                        logger.info(f"Owner changed for guild {guild_id}: {owner_id} -> {fresh_owner_id}, updating database")
+                        guild_record = guild_dao.get_guild(guild_id)
+                        if guild_record:
+                            guild_record.owner_id = int(fresh_owner_id)
+                            guild_dao.update_guild(guild_record)
+                except Exception as e:
+                    logger.error(f"Failed to get fresh owner for guild {guild_id}: {e}")
+                    # Fallback to database owner_id if Discord API fails
+                    is_owner = str(owner_id) == request.user_id
+
+                logger.info(f"Processing guild {guild_id} ({guild_name}): is_owner={is_owner}, user={request.user_id}, owner={owner_id})")
 
                 # Check actual Discord permissions for non-owners
                 permissions = []
@@ -513,7 +536,9 @@ def get_user_guilds():
                     "name": guild_name,
                     "member_count": member_count,
                     "owner": is_owner,
-                    "permissions": permissions
+                    "permissions": permissions,
+                    "icon": guild_icon,
+                    "banner": guild_banner
                 })
 
         logger.info(f"Found {len(user_guilds)} guilds for user {request.user_id}")
