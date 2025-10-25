@@ -1849,6 +1849,7 @@ def get_guild_config_hybrid(guild_id):
         response_data = {
             "guild_id": guild_id,
             "guild_name": guild_info["name"],
+            "guild_icon": guild_info.get("icon"),
             "settings": settings_dict,  # Return exactly what's in the database
             "available_roles": available_roles,
             "available_channels": available_channels,
