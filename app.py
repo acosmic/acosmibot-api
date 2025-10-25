@@ -1889,12 +1889,7 @@ def update_guild_config_hybrid(guild_id):
         # Validate leveling settings
         leveling_required_fields = {
             'enabled': bool,
-            'exp_per_message': int,
-            'exp_cooldown_seconds': int,
             'level_up_announcements': bool,
-            'streak_multiplier': float,
-            'max_streak_bonus': int,
-            'daily_bonus': int,
             'daily_announcements_enabled': bool
         }
 
@@ -1911,37 +1906,6 @@ def update_guild_config_hybrid(guild_id):
                     "message": f"Invalid type for leveling.{field}, expected {field_type.__name__}"
                 }), 400
 
-            # Validate leveling numeric ranges
-        if settings['leveling']['exp_per_message'] < 1 or settings['leveling']['exp_per_message'] > 100:
-            return jsonify({
-                "success": False,
-                "message": "exp_per_message must be between 1 and 100"
-            }), 400
-
-        if settings['leveling']['exp_cooldown_seconds'] < 1 or settings['leveling']['exp_cooldown_seconds'] > 3600:
-            return jsonify({
-                "success": False,
-                "message": "exp_cooldown_seconds must be between 1 and 3600"
-            }), 400
-
-        if settings['leveling']['streak_multiplier'] < 0 or settings['leveling']['streak_multiplier'] > 1.0:
-            return jsonify({
-                "success": False,
-                "message": "streak_multiplier must be between 0 and 1.0"
-            }), 400
-
-        if settings['leveling']['max_streak_bonus'] < 1 or settings['leveling']['max_streak_bonus'] > 50:
-            return jsonify({
-                "success": False,
-                "message": "max_streak_bonus must be between 1 and 50"
-            }), 400
-
-        if settings['leveling']['daily_bonus'] < 100 or settings['leveling']['daily_bonus'] > 10000:
-            return jsonify({
-                "success": False,
-                "message": "daily_bonus must be between 100 and 10000"
-            }), 400
-
         # Validate roles mode
         if settings['roles']['mode'] not in ['progressive', 'single', 'cumulative']:
             return jsonify({
@@ -1952,115 +1916,103 @@ def update_guild_config_hybrid(guild_id):
         if 'games' in settings and 'slots-config' in settings['games']:
             slots_config = settings['games']['slots-config']
 
-            slots_required_fields = {
-                'enabled': bool,
-                'symbols': list,
-                'match_two_multiplier': int,
-                'match_three_multiplier': int,
-                'min_bet': int,
-                'max_bet': int,
-                'bet_options': list
-            }
+            # Only validate required guild-specific fields: enabled and symbols
+            # All other fields (multipliers, bets) are pulled from global defaults in Slots.py
 
-            for field, field_type in slots_required_fields.items():
-                if field not in slots_config:
+            # Validate 'enabled' field
+            if 'enabled' not in slots_config:
+                return jsonify({
+                    "success": False,
+                    "message": "Missing required games.slots-config field: enabled"
+                }), 400
+
+            if not isinstance(slots_config['enabled'], bool):
+                return jsonify({
+                    "success": False,
+                    "message": "Invalid type for games.slots-config.enabled, expected bool"
+                }), 400
+
+            # Validate 'symbols' field if provided
+            if 'symbols' in slots_config:
+                if not isinstance(slots_config['symbols'], list):
                     return jsonify({
                         "success": False,
-                        "message": f"Missing required games.slots-config field: {field}"
+                        "message": "Invalid type for games.slots-config.symbols, expected list"
                     }), 400
 
-                if not isinstance(slots_config[field], field_type):
+                if len(slots_config['symbols']) != 12:
                     return jsonify({
                         "success": False,
-                        "message": f"Invalid type for games.slots-config.{field}, expected {field_type.__name__}"
+                        "message": "games.slots-config.symbols must contain exactly 12 emojis"
                     }), 400
 
-            # Validate symbols list
-            if len(slots_config['symbols']) != 12:
-                return jsonify({
-                    "success": False,
-                    "message": "games.slots-config.symbols must contain exactly 12 emojis"
-                }), 400
-
-            # Validate multipliers
-            if slots_config['match_two_multiplier'] < 1 or slots_config['match_two_multiplier'] > 10:
-                return jsonify({
-                    "success": False,
-                    "message": "games.slots-config.match_two_multiplier must be between 1 and 10"
-                }), 400
-
-            if slots_config['match_three_multiplier'] < 1 or slots_config['match_three_multiplier'] > 100:
-                return jsonify({
-                    "success": False,
-                    "message": "games.slots-config.match_three_multiplier must be between 1 and 100"
-                }), 400
-
-            # Validate bet amounts
-            if slots_config['min_bet'] < 1 or slots_config['min_bet'] > 10000:
-                return jsonify({
-                    "success": False,
-                    "message": "games.slots-config.min_bet must be between 1 and 10000"
-                }), 400
-
-            if slots_config['max_bet'] < slots_config['min_bet'] or slots_config['max_bet'] > 1000000:
-                return jsonify({
-                    "success": False,
-                    "message": "games.slots-config.max_bet must be between min_bet and 1000000"
-                }), 400
-
-            # Validate bet options
-            if not slots_config['bet_options'] or len(slots_config['bet_options']) == 0:
-                return jsonify({
-                    "success": False,
-                    "message": "games.slots-config.bet_options cannot be empty"
-                }), 400
-
-            for bet_option in slots_config['bet_options']:
-                if not isinstance(bet_option, int) or bet_option < 1:
+            # Optional: Validate other fields IF they are provided (for future use by dev admins)
+            if 'match_two_multiplier' in slots_config:
+                if not isinstance(slots_config['match_two_multiplier'], int):
                     return jsonify({
                         "success": False,
-                        "message": "All bet_options must be positive integers"
+                        "message": "Invalid type for games.slots-config.match_two_multiplier, expected int"
                     }), 400
-
-                # Validate multipliers
                 if slots_config['match_two_multiplier'] < 1 or slots_config['match_two_multiplier'] > 10:
                     return jsonify({
                         "success": False,
                         "message": "games.slots-config.match_two_multiplier must be between 1 and 10"
                     }), 400
 
-            if slots_config['match_three_multiplier'] < 1 or slots_config['match_three_multiplier'] > 100:
-                return jsonify({
-                    "success": False,
-                    "message": "games.slots-config.match_three_multiplier must be between 1 and 100"
-                }), 400
-
-            # Validate bet amounts
-            if slots_config['min_bet'] < 1 or slots_config['min_bet'] > 10000:
-                return jsonify({
-                    "success": False,
-                    "message": "games.slots-config.min_bet must be between 1 and 10000"
-                }), 400
-
-            if slots_config['max_bet'] < slots_config['min_bet'] or slots_config['max_bet'] > 1000000:
-                return jsonify({
-                    "success": False,
-                    "message": "games.slots-config.max_bet must be between min_bet and 1000000"
-                }), 400
-
-            # Validate bet options
-            if not slots_config['bet_options'] or len(slots_config['bet_options']) == 0:
-                return jsonify({
-                    "success": False,
-                    "message": "games.slots-config.bet_options cannot be empty"
-                }), 400
-
-            for bet_option in slots_config['bet_options']:
-                if not isinstance(bet_option, int) or bet_option < 1:
+            if 'match_three_multiplier' in slots_config:
+                if not isinstance(slots_config['match_three_multiplier'], int):
                     return jsonify({
                         "success": False,
-                        "message": "All bet_options must be positive integers"
+                        "message": "Invalid type for games.slots-config.match_three_multiplier, expected int"
                     }), 400
+                if slots_config['match_three_multiplier'] < 1 or slots_config['match_three_multiplier'] > 100:
+                    return jsonify({
+                        "success": False,
+                        "message": "games.slots-config.match_three_multiplier must be between 1 and 100"
+                    }), 400
+
+            if 'min_bet' in slots_config:
+                if not isinstance(slots_config['min_bet'], int):
+                    return jsonify({
+                        "success": False,
+                        "message": "Invalid type for games.slots-config.min_bet, expected int"
+                    }), 400
+                if slots_config['min_bet'] < 1 or slots_config['min_bet'] > 10000:
+                    return jsonify({
+                        "success": False,
+                        "message": "games.slots-config.min_bet must be between 1 and 10000"
+                    }), 400
+
+            if 'max_bet' in slots_config:
+                if not isinstance(slots_config['max_bet'], int):
+                    return jsonify({
+                        "success": False,
+                        "message": "Invalid type for games.slots-config.max_bet, expected int"
+                    }), 400
+                min_bet = slots_config.get('min_bet', 1)
+                if slots_config['max_bet'] < min_bet or slots_config['max_bet'] > 1000000:
+                    return jsonify({
+                        "success": False,
+                        "message": "games.slots-config.max_bet must be between min_bet and 1000000"
+                    }), 400
+
+            if 'bet_options' in slots_config:
+                if not isinstance(slots_config['bet_options'], list):
+                    return jsonify({
+                        "success": False,
+                        "message": "Invalid type for games.slots-config.bet_options, expected list"
+                    }), 400
+                if not slots_config['bet_options'] or len(slots_config['bet_options']) == 0:
+                    return jsonify({
+                        "success": False,
+                        "message": "games.slots-config.bet_options cannot be empty"
+                    }), 400
+                for bet_option in slots_config['bet_options']:
+                    if not isinstance(bet_option, int) or bet_option < 1:
+                        return jsonify({
+                            "success": False,
+                            "message": "All bet_options must be positive integers"
+                        }), 400
 
         # Update settings in database
         settings_manager = get_settings_manager()
