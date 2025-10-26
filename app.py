@@ -1904,7 +1904,7 @@ def update_guild_config_hybrid(guild_id):
         settings = data['settings']
 
         # Validate settings structure
-        required_sections = ['leveling', 'roles', 'ai', 'games']
+        required_sections = ['leveling', 'roles', 'ai', 'games', 'cross_server_portal']
         for section in required_sections:
             if section not in settings:
                 return jsonify({
@@ -2040,6 +2040,51 @@ def update_guild_config_hybrid(guild_id):
                             "message": "All bet_options must be positive integers"
                         }), 400
 
+        # Validate cross-server portal settings
+        if 'cross_server_portal' in settings:
+            portal_config = settings['cross_server_portal']
+
+            # Validate 'enabled' field
+            if 'enabled' not in portal_config:
+                return jsonify({
+                    "success": False,
+                    "message": "Missing required cross_server_portal field: enabled"
+                }), 400
+
+            if not isinstance(portal_config['enabled'], bool):
+                return jsonify({
+                    "success": False,
+                    "message": "Invalid type for cross_server_portal.enabled, expected bool"
+                }), 400
+
+            # Validate optional fields if portal is enabled
+            if portal_config.get('enabled'):
+                # Validate portal_cost if provided
+                if 'portal_cost' in portal_config:
+                    if not isinstance(portal_config['portal_cost'], int):
+                        return jsonify({
+                            "success": False,
+                            "message": "Invalid type for cross_server_portal.portal_cost, expected int"
+                        }), 400
+                    if portal_config['portal_cost'] < 100 or portal_config['portal_cost'] > 100000:
+                        return jsonify({
+                            "success": False,
+                            "message": "cross_server_portal.portal_cost must be between 100 and 100000"
+                        }), 400
+
+                # Validate display_name if provided
+                if 'display_name' in portal_config and portal_config['display_name']:
+                    if not isinstance(portal_config['display_name'], str):
+                        return jsonify({
+                            "success": False,
+                            "message": "Invalid type for cross_server_portal.display_name, expected string"
+                        }), 400
+                    if len(portal_config['display_name']) > 50:
+                        return jsonify({
+                            "success": False,
+                            "message": "cross_server_portal.display_name must be 50 characters or less"
+                        }), 400
+
         # Update settings in database
         settings_manager = get_settings_manager()
         success = settings_manager.guild_dao.update_guild_settings(int(guild_id), settings)
@@ -2135,6 +2180,183 @@ def update_ai_settings(guild_id):
         }), 500
 
 
+
+
+# ==================== Cross-Server Portal Endpoints ====================
+
+@app.route('/api/guilds/<guild_id>/portal-config', methods=['GET'])
+@require_auth
+def get_portal_config(guild_id):
+    """Get portal configuration for a guild"""
+    try:
+        # Check permissions
+        has_admin = check_admin_sync(request.user_id, guild_id)
+        if not has_admin:
+            return jsonify({
+                "success": False,
+                "message": "You don't have permission to manage this server"
+            }), 403
+
+        # Get guild settings
+        guild_dao = GuildDao()
+        settings = guild_dao.get_guild_settings(int(guild_id))
+
+        # Extract portal settings or use defaults
+        portal_config = settings.get('cross_server_portal', {
+            'enabled': False,
+            'channel_id': None,
+            'public_listing': True,
+            'display_name': None,
+            'portal_cost': 1000
+        }) if settings else {
+            'enabled': False,
+            'channel_id': None,
+            'public_listing': True,
+            'display_name': None,
+            'portal_cost': 1000
+        }
+
+        return jsonify({
+            "success": True,
+            "config": portal_config
+        })
+
+    except Exception as e:
+        print(f"Error getting portal config: {e}")
+        return jsonify({
+            "success": False,
+            "message": "Internal server error",
+            "error": str(e)
+        }), 500
+
+
+@app.route('/api/guilds/<guild_id>/portal-config', methods=['PATCH'])
+@require_auth
+def update_portal_config(guild_id):
+    """Update portal configuration for a guild"""
+    try:
+        # Check permissions
+        has_admin = check_admin_sync(request.user_id, guild_id)
+        if not has_admin:
+            return jsonify({
+                "success": False,
+                "message": "You don't have permission to manage this server"
+            }), 403
+
+        # Get request data
+        data = request.get_json()
+        if not data:
+            return jsonify({
+                "success": False,
+                "message": "Request body is required"
+            }), 400
+
+        # Get current settings
+        guild_dao = GuildDao()
+        settings = guild_dao.get_guild_settings(int(guild_id)) or {}
+
+        # Initialize portal config if it doesn't exist
+        if 'cross_server_portal' not in settings:
+            settings['cross_server_portal'] = {
+                'enabled': False,
+                'channel_id': None,
+                'public_listing': True,
+                'display_name': None,
+                'portal_cost': 1000
+            }
+
+        # Update portal settings
+        portal_config = settings['cross_server_portal']
+        if 'enabled' in data:
+            portal_config['enabled'] = bool(data['enabled'])
+        if 'channel_id' in data:
+            portal_config['channel_id'] = data['channel_id']
+        if 'public_listing' in data:
+            portal_config['public_listing'] = bool(data['public_listing'])
+        if 'display_name' in data:
+            portal_config['display_name'] = data['display_name']
+        if 'portal_cost' in data:
+            portal_config['portal_cost'] = int(data['portal_cost'])
+
+        # Save updated settings
+        success = guild_dao.update_guild_settings(int(guild_id), settings)
+
+        if success:
+            return jsonify({
+                "success": True,
+                "message": "Portal configuration updated successfully",
+                "config": portal_config
+            })
+        else:
+            return jsonify({
+                "success": False,
+                "message": "Failed to update portal configuration"
+            }), 500
+
+    except Exception as e:
+        print(f"Error updating portal config: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "success": False,
+            "message": "Internal server error",
+            "error": str(e)
+        }), 500
+
+
+@app.route('/api/guilds/search-portals', methods=['GET'])
+@require_auth
+def search_portals():
+    """Search for guilds with portals enabled"""
+    try:
+        query = request.args.get('q', '')
+
+        # Get all guilds
+        guild_dao = GuildDao()
+        all_guilds = guild_dao.get_all_guilds()
+
+        results = []
+        for guild_entity in all_guilds:
+            # Get portal settings
+            settings = guild_dao.get_guild_settings(guild_entity.id)
+            if not settings:
+                continue
+
+            portal_config = settings.get('cross_server_portal', {})
+
+            # Check if portals enabled and publicly listed
+            if not portal_config.get('enabled', False):
+                continue
+            if not portal_config.get('public_listing', True):
+                continue
+            if not portal_config.get('channel_id'):
+                continue
+
+            # Get display name
+            display_name = portal_config.get('display_name') or guild_entity.name
+
+            # Check if query matches (case insensitive)
+            if query.lower() in display_name.lower():
+                results.append({
+                    'id': str(guild_entity.id),
+                    'name': display_name,
+                    'member_count': guild_entity.member_count,
+                    'portal_cost': portal_config.get('portal_cost', 1000)
+                })
+
+        return jsonify({
+            "success": True,
+            "guilds": results,
+            "count": len(results)
+        })
+
+    except Exception as e:
+        print(f"Error searching portals: {e}")
+        return jsonify({
+            "success": False,
+            "message": "Internal server error",
+            "error": str(e)
+        }), 500
 
 
 @app.route('/api/debug/guilds', methods=['GET'])
