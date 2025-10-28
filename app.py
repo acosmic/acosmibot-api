@@ -33,18 +33,19 @@ from models.api_models import (
 from models.base_models import RoleCacheEntry
 from discord_integration import check_admin_sync, get_channels_sync, list_guilds_sync, http_client, run_sync
 
-# # Add this helper function for the new REST client
-# def run_async_rest(coro):
-#     """Run async function for REST client"""
-#     return run_async(coro)
 
 from datetime import datetime
 import logging
+from logging.handlers import RotatingFileHandler
+
+# Ensure Logs directory exists
+os.makedirs('Logs', exist_ok=True)
+
 logging.basicConfig(
     level=logging.DEBUG,
     format='%(asctime)s %(levelname)s %(message)s',
     handlers=[
-        logging.FileHandler('api.log'),
+        RotatingFileHandler('Logs/api.log', maxBytes=10*1024*1024, backupCount=30),
         logging.StreamHandler()  # This adds console output
     ]
 )
@@ -314,55 +315,6 @@ def get_guild_stats_db_only(guild_id):
         }), 500
 
 
-# @app.route('/api/guilds/<guild_id>/leaderboard/level-db', methods=['GET'])
-# @require_auth
-# def get_guild_level_leaderboard_db(guild_id):
-#     """Get level leaderboard for a specific guild using database-only approach"""
-#     try:
-#         from Dao.GuildDao import GuildDao
-#
-#         guild_dao = GuildDao()
-#         limit = min(int(request.args.get('limit', 10)), 50)
-#
-#         # Direct SQL query for leaderboard
-#         sql = """
-#               SELECT gu.user_id, u.discord_username, gu.level, gu.exp, gu.messages_sent
-#               FROM GuildUsers gu
-#                        LEFT JOIN Users u ON gu.user_id = u.id
-#               WHERE gu.guild_id = %s \
-#                 AND gu.is_active = TRUE
-#               ORDER BY gu.level DESC, gu.exp DESC
-#                   LIMIT %s \
-#               """
-#
-#         results = guild_dao.execute_query(sql, (int(guild_id), limit))
-#
-#         leaderboard = []
-#         for i, row in enumerate(results):
-#             user_id, username, level, exp, messages = row
-#             leaderboard.append({
-#                 "rank": i + 1,
-#                 "user_id": user_id,
-#                 "username": username or f"User {user_id}",
-#                 "level": level or 0,
-#                 "exp": exp or 0,
-#                 "messages": messages or 0
-#             })
-#
-#         return jsonify({
-#             "success": True,
-#             "data": leaderboard
-#         })
-#
-#     except Exception as e:
-#         import traceback
-#         return jsonify({
-#             "success": False,
-#             "message": "Failed to get leaderboard",
-#             "error": str(e),
-#             "traceback": traceback.format_exc()
-#         }), 500
-
 
 @app.route('/api/guilds/<guild_id>/leaderboard/messages-db', methods=['GET'])
 @require_auth
@@ -424,29 +376,6 @@ def get_guild_messages_leaderboard_db(guild_id):
             "traceback": traceback.format_exc()
         }), 500
 
-# Guild Management Endpoints
-# @app.route('/api/user/guilds', methods=['GET'])
-# @require_auth
-# def get_user_guilds():
-#     logger.info(f"User {request.user_id} requesting guilds")
-#     try:
-#         logger.info("Calling get_user_manageable_guilds_sync...")
-#         user_guilds = get_user_manageable_guilds_sync(request.user_id)
-#         logger.info(f"Returned {len(user_guilds)} guilds: {user_guilds}")
-#
-#         return jsonify({
-#             "success": True,
-#             "guilds": user_guilds
-#         })
-#     except Exception as e:
-#         logger.error(f"Error getting user guilds: {e}")
-#         import traceback
-#         traceback.print_exc()
-#         return jsonify({
-#             "success": False,
-#             "message": str(e),
-#             "error": str(e)
-#         }), 500
 
 @app.route('/api/user/guilds', methods=['GET'])
 @require_auth
@@ -557,176 +486,6 @@ def get_user_guilds():
         }), 500
 
 
-#
-# @app.route('/api/guilds/<guild_id>/config-db', methods=['GET'])
-# @require_auth
-# def get_guild_config_database_only(guild_id):
-#     """Get guild config using database-only approach (bypass Discord API issues)"""
-#     try:
-#         from Dao.GuildDao import GuildDao
-#         from Dao.GuildUserDao import GuildUserDao
-#
-#         guild_dao = GuildDao()
-#         guild_user_dao = GuildUserDao()
-#
-#         # Get guild record
-#         guild_record = guild_dao.find_by_id(int(guild_id))
-#         if not guild_record or not guild_record.active:
-#             return jsonify({
-#                 "success": False,
-#                 "message": "Guild not found or inactive"
-#             }), 404
-#
-#         # Check permissions
-#         is_owner = str(guild_record.owner_id) == request.user_id
-#         guild_user = guild_user_dao.get_guild_user(int(request.user_id), int(guild_id))
-#         is_active_member = guild_user is not None and guild_user.is_active
-#
-#         if not (is_owner or is_active_member):
-#             return jsonify({
-#                 "success": False,
-#                 "message": "Access denied"
-#             }), 403
-#
-#         # Get settings
-#         settings_manager = get_settings_manager()
-#         settings = settings_manager.get_guild_settings(guild_id)
-#
-#         # Build config using ONLY attributes that exist
-#         config_data = {
-#             "guild_id": guild_id,
-#             "guild_name": guild_record.name,
-#             "member_count": guild_record.member_count or 0,
-#             "owner_id": str(guild_record.owner_id),
-#             "settings": {
-#                 "leveling": {
-#                     "enabled": settings.leveling.enabled,
-#                     "exp_per_message": settings.leveling.exp_per_message,
-#                     "base_exp": settings.leveling.base_exp,
-#                     "exp_multiplier": settings.leveling.exp_multiplier,
-#                     "exp_growth_factor": settings.leveling.exp_growth_factor,
-#                     "exp_cooldown_seconds": settings.leveling.exp_cooldown_seconds,
-#                     "max_level": settings.leveling.max_level,
-#                     "level_up_announcements": settings.leveling.level_up_announcements,
-#                     "announcement_channel_id": settings.leveling.announcement_channel_id
-#                 },
-#                 "roles": {
-#                     # Only use attributes that were shown to exist
-#                     "enabled": settings.roles.enabled,
-#                     "mode": settings.roles.mode,
-#                     "remove_previous_roles": settings.roles.remove_previous_roles,
-#                     "max_level_tracked": settings.roles.max_level_tracked,
-#                     "role_announcement": settings.roles.role_announcement,
-#                     "role_announcement_message": settings.roles.role_announcement_message,
-#                     "role_mappings": dict(settings.roles.role_mappings),
-#                     "role_cache": {role_id: role.dict() for role_id, role in settings.roles.role_cache.items()}
-#                 }
-#             },
-#             "available_roles": [],  # Discord API not available
-#             "available_channels": [],  # Discord API not available
-#             "permissions": {
-#                 "is_owner": is_owner,
-#                 "can_configure": is_owner or is_active_member,
-#                 "can_view_stats": True,
-#                 "method": "database_only"
-#             }
-#         }
-#
-#         return jsonify({
-#             "success": True,
-#             "data": config_data
-#         })
-#
-#     except Exception as e:
-#         import traceback
-#         return jsonify({
-#             "success": False,
-#             "message": "Internal server error",
-#             "error": str(e),
-#             "traceback": traceback.format_exc()
-#         }), 500
-
-# @app.route('/api/guilds/<guild_id>/config', methods=['GET'])
-# @require_auth
-# def get_guild_config(guild_id):
-#     """Get complete guild configuration"""
-#     try:
-#         # Check permissions
-#         has_admin = check_guild_admin_permissions_sync(request.user_id, guild_id)
-#         if not has_admin:
-#             return jsonify({
-#                 "success": False,
-#                 "message": "You don't have permission to manage this server",
-#                 "error_code": "insufficient_permissions"
-#             }), 403
-#
-#         # Get guild info
-#         guild_info = get_guild_info_sync(guild_id)
-#         if not guild_info:
-#             return jsonify({
-#                 "success": False,
-#                 "message": "Guild not found",
-#                 "error_code": "guild_not_found"
-#             }), 404
-#
-#         # Get settings
-#         settings_manager = get_settings_manager()
-#         settings = settings_manager.get_guild_settings(guild_id)
-#
-#         # Get Discord data
-#         available_roles, available_channels = get_discord_guild_data_sync(guild_id)
-#
-#         # Build role mappings response
-#         role_mappings = []
-#         for level, role_ids in settings.roles.role_mappings.items():
-#             roles = []
-#             for role_id in role_ids:
-#                 # Find role in available roles
-#                 role_info = next((r for r in available_roles if r.id == role_id), None)
-#                 if role_info:
-#                     roles.append(role_info.dict())
-#                 else:
-#                     # Use cached role info
-#                     cached_role = settings.roles.role_cache.get(role_id)
-#                     if cached_role:
-#                         roles.append({
-#                             "id": role_id,
-#                             "name": cached_role.name,
-#                             "color": cached_role.color,
-#                             "position": cached_role.position,
-#                             "managed": cached_role.managed,
-#                             "mentionable": True,
-#                             "hoist": False
-#                         })
-#
-#             if roles:  # Only include levels that have valid roles
-#                 role_mappings.append({
-#                     "level": int(level),
-#                     "roles": roles
-#                 })
-#
-#         response_data = {
-#             "guild_id": guild_id,
-#             "guild_name": guild_info["name"],
-#             "settings": settings.dict(),
-#             "available_roles": [role.dict() for role in available_roles],
-#             "available_channels": [channel.dict() for channel in available_channels],
-#             "role_mappings": role_mappings
-#         }
-#
-#         return jsonify({
-#             "success": True,
-#             "data": response_data
-#         })
-#
-#     except Exception as e:
-#         print(f"Error getting guild config: {e}")
-#         return jsonify({
-#             "success": False,
-#             "message": "Failed to get guild configuration",
-#             "error": str(e)
-#         }), 500
-
 @app.route('/api/guilds/<guild_id>/leveling', methods=['PUT'])
 @require_auth
 def update_leveling_settings(guild_id):
@@ -789,244 +548,6 @@ def update_leveling_settings(guild_id):
             "message": "Internal server error",
             "error": str(e)
         }), 500
-
-#
-# @app.route('/api/guilds/<guild_id>/roles', methods=['PUT'])
-# @require_auth
-# def update_role_settings(guild_id):
-#     """Update role settings"""
-#     try:
-#         # Check permissions
-#         has_admin = check_guild_admin_permissions_sync(request.user_id, guild_id)
-#         if not has_admin:
-#             return jsonify({
-#                 "success": False,
-#                 "message": "You don't have permission to manage this server"
-#             }), 403
-#
-#         # Validate request data
-#         try:
-#             updates = UpdateRoleSettingsRequest(**request.json)
-#         except Exception as e:
-#             return jsonify({
-#                 "success": False,
-#                 "message": "Invalid request data",
-#                 "error": str(e)
-#             }), 400
-#
-#         # Update settings
-#         settings_manager = get_settings_manager()
-#         success = settings_manager.update_role_settings(guild_id, updates)
-#
-#         if success:
-#             return jsonify({
-#                 "success": True,
-#                 "message": "Role settings updated successfully"
-#             })
-#         else:
-#             return jsonify({
-#                 "success": False,
-#                 "message": "Failed to update role settings"
-#             }), 500
-#
-#     except Exception as e:
-#         print(f"Error updating role settings: {e}")
-#         return jsonify({
-#             "success": False,
-#             "message": "Internal server error",
-#             "error": str(e)
-#         }), 500
-
-#
-# @app.route('/api/guilds/<guild_id>/role-mappings', methods=['POST'])
-# @require_auth
-# def update_role_mapping(guild_id):
-#     """Add or update role mapping for a specific level"""
-#     try:
-#         # Check permissions
-#         has_admin = check_guild_admin_permissions_sync(request.user_id, guild_id)
-#         if not has_admin:
-#             return jsonify({
-#                 "success": False,
-#                 "message": "You don't have permission to manage this server"
-#             }), 403
-#
-#         # Validate request data
-#         try:
-#             mapping_request = RoleMappingRequest(**request.json)
-#         except Exception as e:
-#             return jsonify({
-#                 "success": False,
-#                 "message": "Invalid request data",
-#                 "error": str(e)
-#             }), 400
-#
-#         # Get available roles to validate and cache role info
-#         available_roles, _ = get_discord_guild_data_sync(guild_id)
-#         role_cache = {}
-#
-#         for role_id in mapping_request.role_ids:
-#             # Find role in available roles
-#             role_info = next((r for r in available_roles if r.id == role_id), None)
-#             if role_info:
-#                 # Check if role can be assigned by bot
-#                 if role_info.managed:
-#                     return jsonify({
-#                         "success": False,
-#                         "message": f"Role '{role_info.name}' is managed by Discord and cannot be assigned"
-#                     }), 400
-#
-#                 role_cache[role_id] = RoleCacheEntry(
-#                     name=role_info.name,
-#                     color=role_info.color,
-#                     position=role_info.position,
-#                     last_verified=datetime.now(),
-#                     exists=True,
-#                     managed=role_info.managed
-#                 )
-#             else:
-#                 return jsonify({
-#                     "success": False,
-#                     "message": f"Role {role_id} not found in server"
-#                 }), 400
-#
-#         # Update role mapping
-#         settings_manager = get_settings_manager()
-#         success = settings_manager.update_role_mapping(
-#             guild_id,
-#             mapping_request.level,
-#             mapping_request.role_ids,
-#             role_cache
-#         )
-#
-#         if success:
-#             return jsonify({
-#                 "success": True,
-#                 "message": f"Role mapping updated for level {mapping_request.level}"
-#             })
-#         else:
-#             return jsonify({
-#                 "success": False,
-#                 "message": "Failed to update role mapping"
-#             }), 500
-#
-#     except Exception as e:
-#         print(f"Error updating role mapping: {e}")
-#         return jsonify({
-#             "success": False,
-#             "message": "Internal server error",
-#             "error": str(e)
-#         }), 500
-
-#
-# @app.route('/api/guilds/<guild_id>/role-mappings/<int:level>', methods=['DELETE'])
-# @require_auth
-# def delete_role_mapping(guild_id, level):
-#     """Delete role mapping for a specific level"""
-#     try:
-#         # Check permissions
-#         has_admin = check_guild_admin_permissions_sync(request.user_id, guild_id)
-#         if not has_admin:
-#             return jsonify({
-#                 "success": False,
-#                 "message": "You don't have permission to manage this server"
-#             }), 403
-#
-#         # Delete role mapping
-#         settings_manager = get_settings_manager()
-#         success = settings_manager.delete_role_mapping(guild_id, level)
-#
-#         if success:
-#             return jsonify({
-#                 "success": True,
-#                 "message": f"Role mapping deleted for level {level}"
-#             })
-#         else:
-#             return jsonify({
-#                 "success": False,
-#                 "message": "Failed to delete role mapping"
-#             }), 500
-#
-#     except Exception as e:
-#         print(f"Error deleting role mapping: {e}")
-#         return jsonify({
-#             "success": False,
-#             "message": "Internal server error",
-#             "error": str(e)
-#         }), 500
-
-#
-# @app.route('/api/guilds/<guild_id>/roles', methods=['GET'])
-# @require_auth
-# def get_guild_roles(guild_id):
-#     """Get available roles for the guild"""
-#     try:
-#         # Check permissions
-#         has_admin = check_guild_admin_permissions_sync(request.user_id, guild_id)
-#         if not has_admin:
-#             return jsonify({
-#                 "success": False,
-#                 "message": "You don't have permission to manage this server"
-#             }), 403
-#
-#         # Get Discord roles
-#         available_roles, _ = get_discord_guild_data_sync(guild_id)
-#
-#         # Filter out @everyone and managed roles for assignment
-#         assignable_roles = [
-#             role for role in available_roles
-#             if role.name != "@everyone" and not role.managed
-#         ]
-#
-#         return jsonify({
-#             "success": True,
-#             "roles": [role.dict() for role in assignable_roles]
-#         })
-#
-#     except Exception as e:
-#         print(f"Error getting guild roles: {e}")
-#         return jsonify({
-#             "success": False,
-#             "message": "Internal server error",
-#             "error": str(e)
-#         }), 500
-
-#
-# @app.route('/api/guilds/<guild_id>/channels', methods=['GET'])
-# @require_auth
-# def get_guild_channels(guild_id):
-#     """Get available text channels for the guild"""
-#     try:
-#         # Check permissions
-#         has_admin = check_guild_admin_permissions_sync(request.user_id, guild_id)
-#         if not has_admin:
-#             return jsonify({
-#                 "success": False,
-#                 "message": "You don't have permission to manage this server"
-#             }), 403
-#
-#         # Get Discord channels
-#         _, available_channels = get_discord_guild_data_sync(guild_id)
-#
-#         # Filter to only text-based channels
-#         text_channels = [
-#             channel for channel in available_channels
-#             if channel.is_text_based()
-#         ]
-#
-#         return jsonify({
-#             "success": True,
-#             "channels": [channel.dict() for channel in text_channels]
-#         })
-#
-#     except Exception as e:
-#         print(f"Error getting guild channels: {e}")
-#         return jsonify({
-#             "success": False,
-#             "message": "Internal server error",
-#             "error": str(e)
-#         }), 500
-
 
 # User and statistics endpoints
 @app.route('/api/user/<int:user_id>')
@@ -1114,18 +635,6 @@ def get_level_leaderboard():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# @app.route('/api/leaderboard/guild/level')
-# def get_guild_level_leaderboard():
-#     try:
-#         from Dao.GuildUserDao import GuildUserDao
-#         guild_user_dao = GuildUserDao()
-#
-#         limit = min(int(request.args.get('limit', 10)), 50)
-#         top_users = guild_user_dao.get_top_users_by_level(limit)
-#
-#         return jsonify(top_users)
-#     except Exception as e:
-#         return jsonify({'error': str(e)}), 500
 
 # User rankings
 @app.route('/api/user/<int:user_id>/rank/currency')
@@ -1307,60 +816,6 @@ def get_bot_invite():
         'contact': 'Contact Acosmic on Discord for more info!'
     })
 
-#
-# @app.route('/api/guilds/<guild_id>/stats', methods=['GET'])
-# @require_auth
-# def get_guild_stats(guild_id):
-#     """Get guild statistics and overview"""
-#     try:
-#         # Check if user is in the guild (don't need admin for stats viewing)
-#         user_guilds = get_user_manageable_guilds_sync(request.user_id)
-#         user_in_guild = any(guild['id'] == guild_id for guild in user_guilds)
-#
-#         if not user_in_guild:
-#             # Also check if user is just a member (you'll need to implement this)
-#             # For now, we'll allow anyone with a valid token
-#             pass
-#
-#         from Dao.GuildDao import GuildDao
-#         from Dao.GuildUserDao import GuildUserDao
-#
-#         guild_dao = GuildDao()
-#         guild_user_dao = GuildUserDao()
-#
-#         # Get basic guild info
-#         guild = guild_dao.find_by_id(int(guild_id))
-#         if not guild:
-#             return jsonify({
-#                 "success": False,
-#                 "message": "Guild not found"
-#             }), 404
-#
-#         # Get guild statistics
-#         guild_stats = {
-#             "guild_id": guild_id,
-#             "guild_name": guild.name,
-#             "member_count": guild.member_count,
-#             "total_active_members": guild_user_dao.get_active_member_count(int(guild_id)),
-#             "total_messages": guild_user_dao.get_total_messages_in_guild(int(guild_id)),
-#             "total_exp_distributed": guild_user_dao.get_total_exp_in_guild(int(guild_id)),
-#             "highest_level": guild_user_dao.get_highest_level_in_guild(int(guild_id)),
-#             "avg_level": guild_user_dao.get_average_level_in_guild(int(guild_id)),
-#             "last_activity": guild.last_active
-#         }
-#
-#         return jsonify({
-#             "success": True,
-#             "data": guild_stats
-#         })
-#
-#     except Exception as e:
-#         print(f"Error getting guild stats: {e}")
-#         return jsonify({
-#             "success": False,
-#             "message": "Failed to get guild statistics",
-#             "error": str(e)
-#         }), 500
 
 
 @app.route('/api/guilds/<guild_id>/leaderboard/level', methods=['GET'])
@@ -1540,93 +995,6 @@ def get_user_guild_permissions(guild_id):
             "error": str(e)
         }), 500
 
-#
-# @app.route('/api/guilds/<guild_id>/permissions', methods=['GET'])
-# @require_auth
-# def get_user_guild_permissions(guild_id):
-#     """Get user's permissions in a specific guild"""
-#     try:
-#         # Check what permissions the user has
-#         has_admin = check_guild_admin_permissions_sync(request.user_id, guild_id)
-#
-#         # Get guild info to check ownership
-#         guild_info = get_guild_info_sync(guild_id)
-#         is_owner = guild_info and guild_info.get('owner_id') == request.user_id
-#
-#         permissions = {
-#             "guild_id": guild_id,
-#             "user_id": request.user_id,
-#             "is_owner": is_owner,
-#             "has_admin": has_admin,
-#             "can_configure_bot": has_admin,
-#             "can_view_stats": True  # Everyone can view stats if they're in the guild
-#         }
-#
-#         return jsonify({
-#             "success": True,
-#             "data": permissions
-#         })
-#
-#     except Exception as e:
-#         print(f"Error getting user permissions: {e}")
-#         return jsonify({
-#             "success": False,
-#             "message": "Failed to get permissions",
-#             "error": str(e)
-#         }), 500
-
-#
-# @app.route('/api/guilds/<guild_id>/bot-status', methods=['GET'])
-# @require_auth
-# def get_bot_status_in_guild(guild_id):
-#     """Get bot's status and permissions in the guild"""
-#     try:
-#         # Check user has admin permissions
-#         has_admin = check_guild_admin_permissions_sync(request.user_id, guild_id)
-#         if not has_admin:
-#             return jsonify({
-#                 "success": False,
-#                 "message": "You don't have permission to view bot status"
-#             }), 403
-#
-#         # Get bot's permissions and status
-#         guild_info = get_guild_info_sync(guild_id)
-#         if not guild_info:
-#             return jsonify({
-#                 "success": False,
-#                 "message": "Guild not found or bot not in guild"
-#             }), 404
-#
-#         # You'll need to implement getting bot permissions
-#         # This is a placeholder for bot status
-#         bot_status = {
-#             "guild_id": guild_id,
-#             "bot_in_guild": True,
-#             "can_manage_roles": True,  # Check actual permissions
-#             "can_send_messages": True,
-#             "can_embed_links": True,
-#             "highest_role_position": 10,  # Get actual position
-#             "missing_permissions": [],  # List any missing permissions
-#             "features_available": {
-#                 "leveling": True,
-#                 "role_assignment": True,
-#                 "economy": True,
-#                 "announcements": True
-#             }
-#         }
-#
-#         return jsonify({
-#             "success": True,
-#             "data": bot_status
-#         })
-#
-#     except Exception as e:
-#         print(f"Error getting bot status: {e}")
-#         return jsonify({
-#             "success": False,
-#             "message": "Failed to get bot status",
-#             "error": str(e)
-#         }), 500
 
 
 # Test endpoints (remove in production)
@@ -2371,6 +1739,442 @@ def debug_guilds():
         })
     except Exception as e:
         print(f"Error listing guilds: {e}")
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+# ==================== ADMIN PANEL ENDPOINTS ====================
+
+from admin_auth import require_admin, require_super_admin, log_admin_action, check_is_admin
+from Dao.AdminUserDao import AdminUserDao
+from Dao.GlobalSettingsDao import GlobalSettingsDao
+from Dao.AuditLogDao import AuditLogDao
+
+
+@app.route('/api/admin/check', methods=['GET'])
+@require_auth
+def check_admin_status():
+    """Check if the current user is an admin"""
+    try:
+        is_admin = check_is_admin(request.user_id)
+        admin_dao = AdminUserDao()
+        admin_info = admin_dao.get_admin_by_discord_id(request.user_id) if is_admin else None
+
+        return jsonify({
+            "success": True,
+            "is_admin": is_admin,
+            "admin_info": admin_info
+        })
+    except Exception as e:
+        logger.error(f"Error checking admin status: {e}")
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+# ==================== Global Settings Endpoints ====================
+
+@app.route('/api/admin/settings', methods=['GET'])
+@require_auth
+@require_admin
+def get_global_settings():
+    """Get all global bot settings"""
+    try:
+        settings_dao = GlobalSettingsDao()
+        grouped_settings = settings_dao.get_all_settings_grouped()
+
+        return jsonify({
+            "success": True,
+            "settings": grouped_settings
+        })
+    except Exception as e:
+        logger.error(f"Error fetching global settings: {e}")
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@app.route('/api/admin/settings', methods=['POST'])
+@require_auth
+@require_admin
+def update_global_settings():
+    """Update multiple global settings"""
+    try:
+        data = request.get_json()
+        if not data or 'settings' not in data:
+            return jsonify({
+                "success": False,
+                "message": "Settings data is required"
+            }), 400
+
+        settings_dao = GlobalSettingsDao()
+
+        # Track changes for audit log
+        changes = {}
+
+        for setting_key, setting_value in data['settings'].items():
+            old_setting = settings_dao.get_setting(setting_key)
+            old_value = old_setting['setting_value'] if old_setting else None
+
+            # Update setting
+            success = settings_dao.update_setting_value(
+                setting_key,
+                setting_value,
+                updated_by=request.admin_info['discord_id']
+            )
+
+            if success:
+                changes[setting_key] = {
+                    'old_value': old_value,
+                    'new_value': setting_value
+                }
+
+        # Log the action
+        log_admin_action(
+            action_type='update_global_settings',
+            target_type='settings',
+            target_id='bulk_update',
+            changes=changes
+        )
+
+        return jsonify({
+            "success": True,
+            "message": "Settings updated successfully",
+            "updated_count": len(changes)
+        })
+
+    except Exception as e:
+        logger.error(f"Error updating global settings: {e}")
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@app.route('/api/admin/settings/<category>', methods=['GET'])
+@require_auth
+@require_admin
+def get_settings_by_category(category):
+    """Get settings for a specific category"""
+    try:
+        valid_categories = ['features', 'rate_limits', 'defaults', 'maintenance']
+        if category not in valid_categories:
+            return jsonify({
+                "success": False,
+                "message": f"Invalid category. Must be one of: {', '.join(valid_categories)}"
+            }), 400
+
+        settings_dao = GlobalSettingsDao()
+        settings = settings_dao.get_settings_by_category(category)
+
+        return jsonify({
+            "success": True,
+            "category": category,
+            "settings": settings
+        })
+    except Exception as e:
+        logger.error(f"Error fetching settings for category {category}: {e}")
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+# ==================== Guild Management Endpoints ====================
+
+@app.route('/api/admin/guilds', methods=['GET'])
+@require_auth
+@require_admin
+def get_all_guilds_admin():
+    """Get all guilds with detailed stats (admin only)"""
+    try:
+        guild_dao = GuildDao()
+
+        # Get pagination parameters
+        limit = min(int(request.args.get('limit', 50)), 100)
+        offset = int(request.args.get('offset', 0))
+        search = request.args.get('search', '')
+
+        # Get all guilds
+        all_guilds = guild_dao.get_all_guilds()
+
+        guilds_data = []
+        for guild in all_guilds:
+            # Filter by search term if provided
+            if search and search.lower() not in guild.name.lower():
+                continue
+
+            # Get member count
+            member_count = guild_dao.get_active_member_count(guild.id)
+
+            # Parse settings
+            settings = {}
+            if guild.settings:
+                try:
+                    settings = json.loads(guild.settings) if isinstance(guild.settings, str) else guild.settings
+                except:
+                    settings = {}
+
+            guilds_data.append({
+                'id': str(guild.id),
+                'name': guild.name,
+                'owner_id': str(guild.owner_id),
+                'member_count': member_count,
+                'active': guild.active,
+                'created_at': guild.created.isoformat() if guild.created else None,
+                'last_active': guild.last_active.isoformat() if guild.last_active else None,
+                'settings_enabled': {
+                    'leveling': settings.get('leveling', {}).get('enabled', False),
+                    'ai': settings.get('ai', {}).get('enabled', False),
+                    'economy': settings.get('economy', {}).get('enabled', False),
+                    'portal': settings.get('cross_server_portal', {}).get('enabled', False)
+                }
+            })
+
+        # Apply pagination
+        total_count = len(guilds_data)
+        guilds_data = guilds_data[offset:offset + limit]
+
+        return jsonify({
+            "success": True,
+            "guilds": guilds_data,
+            "total": total_count,
+            "limit": limit,
+            "offset": offset
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching all guilds: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@app.route('/api/admin/guilds/<guild_id>', methods=['GET'])
+@require_auth
+@require_admin
+def get_guild_details_admin(guild_id):
+    """Get detailed information about a specific guild (admin only)"""
+    try:
+        guild_dao = GuildDao()
+        guild = guild_dao.find_by_id(int(guild_id))
+
+        if not guild:
+            return jsonify({
+                "success": False,
+                "message": "Guild not found"
+            }), 404
+
+        # Get detailed stats
+        member_count = guild_dao.get_active_member_count(guild.id)
+
+        # Parse settings
+        settings = {}
+        if guild.settings:
+            try:
+                settings = json.loads(guild.settings) if isinstance(guild.settings, str) else guild.settings
+            except:
+                settings = {}
+
+        guild_data = {
+            'id': str(guild.id),
+            'name': guild.name,
+            'owner_id': str(guild.owner_id),
+            'member_count': member_count,
+            'active': guild.active,
+            'created_at': guild.created.isoformat() if guild.created else None,
+            'last_active': guild.last_active.isoformat() if guild.last_active else None,
+            'settings': settings
+        }
+
+        return jsonify({
+            "success": True,
+            "guild": guild_data
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching guild details: {e}")
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+# ==================== Monitoring Dashboard Endpoints ====================
+
+@app.route('/api/admin/stats/overview', methods=['GET'])
+@require_auth
+@require_admin
+def get_admin_stats_overview():
+    """Get overview statistics for admin dashboard"""
+    try:
+        from Dao.UserDao import UserDao
+
+        guild_dao = GuildDao()
+        user_dao = UserDao()
+
+        # Get guild stats
+        all_guilds = guild_dao.get_all_guilds()
+        active_guilds = [g for g in all_guilds if g.active]
+
+        # Get user stats
+        total_users = user_dao.get_total_active_users()
+        total_messages = user_dao.get_total_messages()
+        total_currency = user_dao.get_total_currency()
+
+        # Calculate today's activity (simplified - you may want to add date filtering)
+        commands_today = 0  # You'll need to implement command tracking
+
+        overview_stats = {
+            'total_guilds': len(all_guilds),
+            'active_guilds': len(active_guilds),
+            'total_users': total_users,
+            'total_messages': total_messages,
+            'total_currency': total_currency,
+            'commands_today': commands_today,
+            'avg_members_per_guild': sum(guild_dao.get_active_member_count(g.id) for g in active_guilds) / len(active_guilds) if active_guilds else 0
+        }
+
+        return jsonify({
+            "success": True,
+            "stats": overview_stats
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching admin stats: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+# ==================== Audit Log Endpoints ====================
+
+@app.route('/api/admin/audit-log', methods=['GET'])
+@require_auth
+@require_admin
+def get_audit_log():
+    """Get audit log with pagination and filtering"""
+    try:
+        audit_dao = AuditLogDao()
+
+        # Get query parameters
+        limit = min(int(request.args.get('limit', 100)), 500)
+        offset = int(request.args.get('offset', 0))
+        action_type = request.args.get('action_type', None)
+        admin_id = request.args.get('admin_id', None)
+        search = request.args.get('search', None)
+
+        # Fetch logs based on filters
+        if action_type:
+            logs = audit_dao.get_logs_by_action_type(action_type, limit, offset)
+        elif admin_id:
+            logs = audit_dao.get_logs_by_admin(admin_id, limit, offset)
+        elif search:
+            logs = audit_dao.search_logs(search, limit, offset)
+        else:
+            logs = audit_dao.get_recent_logs(limit, offset)
+
+        total_count = audit_dao.get_log_count()
+
+        return jsonify({
+            "success": True,
+            "logs": logs,
+            "total": total_count,
+            "limit": limit,
+            "offset": offset
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching audit log: {e}")
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+# ==================== Admin User Management Endpoints ====================
+
+@app.route('/api/admin/users', methods=['GET'])
+@require_super_admin
+def get_admin_users():
+    """Get all admin users (super admin only)"""
+    try:
+        admin_dao = AdminUserDao()
+        admins = admin_dao.get_all_admins()
+
+        return jsonify({
+            "success": True,
+            "admins": admins
+        })
+    except Exception as e:
+        logger.error(f"Error fetching admin users: {e}")
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@app.route('/api/admin/users', methods=['POST'])
+@require_super_admin
+def create_admin_user():
+    """Create a new admin user (super admin only)"""
+    try:
+        data = request.get_json()
+
+        required_fields = ['discord_id', 'discord_username', 'role']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({
+                    "success": False,
+                    "message": f"Missing required field: {field}"
+                }), 400
+
+        if data['role'] not in ['admin', 'super_admin']:
+            return jsonify({
+                "success": False,
+                "message": "Role must be 'admin' or 'super_admin'"
+            }), 400
+
+        admin_dao = AdminUserDao()
+        admin_id = admin_dao.create_admin(
+            discord_id=data['discord_id'],
+            discord_username=data['discord_username'],
+            role=data['role'],
+            created_by=request.admin_info['discord_id']
+        )
+
+        if admin_id:
+            # Log the action
+            log_admin_action(
+                action_type='create_admin_user',
+                target_type='admin',
+                target_id=data['discord_id'],
+                changes={'role': data['role'], 'username': data['discord_username']}
+            )
+
+            return jsonify({
+                "success": True,
+                "message": "Admin user created successfully",
+                "admin_id": admin_id
+            })
+        else:
+            return jsonify({
+                "success": False,
+                "message": "Failed to create admin user"
+            }), 500
+
+    except Exception as e:
+        logger.error(f"Error creating admin user: {e}")
         return jsonify({
             "success": False,
             "error": str(e)
