@@ -1213,6 +1213,28 @@ def get_guild_config_hybrid(guild_id):
                 "bet_options": [100, 1000, 5000, 10000, 25000]
             }
 
+        # Add default Twitch settings if not present
+        if "twitch" not in settings_dict:
+            settings_dict["twitch"] = {
+                "enabled": False,
+                "announcement_channel_id": None,
+                "tracked_streamers": [],
+                "announcement_settings": {
+                    "include_thumbnail": True,
+                    "include_game": True,
+                    "include_viewer_count": True,
+                    "include_start_time": True,
+                    "color": "0x6441A4"
+                },
+                "vod_settings": {
+                    "enabled": False,
+                    "edit_message_when_vod_available": True,
+                    "vod_check_interval_seconds": 300,
+                    "vod_message_suffix": "\n\n📺 **VOD Available:** [Watch Recording]({vod_url})"
+                },
+                "notification_method": "polling"
+            }
+
         # Build response with ONLY real data from database
         response_data = {
             "guild_id": guild_id,
@@ -1272,13 +1294,31 @@ def update_guild_config_hybrid(guild_id):
         settings = data['settings']
 
         # Validate settings structure
-        required_sections = ['leveling', 'roles', 'ai', 'games', 'cross_server_portal']
+        required_sections = ['leveling', 'roles', 'ai', 'games', 'cross_server_portal', 'twitch']
         for section in required_sections:
             if section not in settings:
                 return jsonify({
                     "success": False,
                     "message": f"Missing required settings section: {section}"
                 }), 400
+
+        # Validate Twitch settings if present
+        if 'twitch' in settings and settings['twitch'].get('enabled'):
+            # Validate tracked_streamers limit (2 max for non-premium)
+            tracked_streamers = settings['twitch'].get('tracked_streamers', [])
+            if len(tracked_streamers) > 2:
+                return jsonify({
+                    "success": False,
+                    "message": "Maximum 2 streamers allowed (upgrade to premium for more)"
+                }), 400
+
+            # Validate each streamer has required fields
+            for streamer in tracked_streamers:
+                if 'twitch_username' not in streamer or not streamer['twitch_username']:
+                    return jsonify({
+                        "success": False,
+                        "message": "Each streamer must have a twitch_username"
+                    }), 400
 
         # Validate leveling settings
         leveling_required_fields = {
@@ -2177,6 +2217,67 @@ def create_admin_user():
         logger.error(f"Error creating admin user: {e}")
         return jsonify({
             "success": False,
+            "error": str(e)
+        }), 500
+
+
+@app.route('/api/twitch/validate-username', methods=['POST'])
+@require_auth
+def validate_twitch_username():
+    """Validate that a Twitch username exists"""
+    try:
+        data = request.get_json()
+        if not data or 'username' not in data:
+            return jsonify({
+                "success": False,
+                "message": "Username is required"
+            }), 400
+
+        username = data['username'].strip()
+        if not username:
+            return jsonify({
+                "success": False,
+                "message": "Username cannot be empty"
+            }), 400
+
+        # Import TwitchService and validate
+        import sys
+        import os
+        # Add acosmibot directory to path
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'acosmibot'))
+
+        from Services.twitch_service import TwitchService
+        import asyncio
+        import aiohttp
+
+        async def check_username():
+            tw = TwitchService()
+            async with aiohttp.ClientSession() as session:
+                return await tw.validate_username(session, username)
+
+        # Run async validation
+        is_valid = asyncio.run(check_username())
+
+        if is_valid:
+            return jsonify({
+                "success": True,
+                "valid": True,
+                "message": f"Username '{username}' is valid"
+            })
+        else:
+            return jsonify({
+                "success": True,
+                "valid": False,
+                "message": f"Username '{username}' not found on Twitch"
+            })
+
+    except Exception as e:
+        logger.error(f"Error validating Twitch username: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "success": False,
+            "message": "Failed to validate username",
             "error": str(e)
         }), 500
 
