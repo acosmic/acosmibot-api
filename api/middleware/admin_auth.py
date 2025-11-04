@@ -8,13 +8,17 @@ import sys
 import os
 from functools import wraps
 from flask import request, jsonify
+from pathlib import Path
 
-# Add parent directory to path to import bot modules
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# Add bot project to path
+current_dir = Path(__file__).parent.parent.parent
+bot_project_path = current_dir.parent / "acosmibot"
+if str(bot_project_path) not in sys.path:
+    sys.path.insert(0, str(bot_project_path))
 
-from acosmibot.Dao.AdminUserDao import AdminUserDao
-from acosmibot.Dao.AuditLogDao import AuditLogDao
-from acosmibot.logger import AppLogger
+from Dao.AdminUserDao import AdminUserDao
+from Dao.AuditLogDao import AuditLogDao
+from logger import AppLogger
 
 logger = AppLogger(__name__).get_logger()
 
