@@ -166,18 +166,19 @@ class SimpleDiscordHTTPClient:
             return False
 
     async def get_channels(self, guild_id: str):
-        """Get text channels for guild"""
+        """Get text and announcement channels for guild"""
         try:
             channels_data = await self.get_guild_channels(guild_id)
 
             channels = []
             for channel in channels_data:
-                # Type 0 = text channel
-                if channel.get('type') == 0:
+                # Type 0 = text channel, Type 5 = announcement/news channel
+                if channel.get('type') in [0, 5]:
+                    channel_type = 'announcement' if channel.get('type') == 5 else 'text'
                     channels.append({
                         'id': str(channel['id']),
                         'name': channel['name'],
-                        'type': 'text'
+                        'type': channel_type
                     })
 
             return channels
