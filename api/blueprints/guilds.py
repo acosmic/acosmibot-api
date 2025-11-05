@@ -409,6 +409,13 @@ def get_guild_config_hybrid(guild_id):
                 "notification_method": "polling"
             }
 
+        # Add default Reaction Roles settings if not present
+        if "reaction_roles" not in settings_dict:
+            settings_dict["reaction_roles"] = {
+                "enabled": False,
+                "messages": []
+            }
+
         # Build response with ONLY real data from database
         response_data = {
             "guild_id": guild_id,
@@ -467,7 +474,7 @@ def update_guild_config_hybrid(guild_id):
         settings = data['settings']
 
         # Validate settings structure
-        required_sections = ['leveling', 'roles', 'ai', 'games', 'cross_server_portal', 'twitch']
+        required_sections = ['leveling', 'roles', 'ai', 'games', 'cross_server_portal', 'twitch', 'reaction_roles']
         for section in required_sections:
             if section not in settings:
                 return jsonify({
@@ -665,6 +672,36 @@ def update_guild_config_hybrid(guild_id):
                             "success": False,
                             "message": "cross_server_portal.display_name must be 50 characters or less"
                         }), 400
+
+        # Validate reaction_roles settings
+        if 'reaction_roles' in settings:
+            rr_config = settings['reaction_roles']
+
+            # Validate 'enabled' field
+            if 'enabled' not in rr_config:
+                return jsonify({
+                    "success": False,
+                    "message": "Missing required reaction_roles field: enabled"
+                }), 400
+
+            if not isinstance(rr_config['enabled'], bool):
+                return jsonify({
+                    "success": False,
+                    "message": "Invalid type for reaction_roles.enabled, expected bool"
+                }), 400
+
+            # Validate 'messages' field
+            if 'messages' not in rr_config:
+                return jsonify({
+                    "success": False,
+                    "message": "Missing required reaction_roles field: messages"
+                }), 400
+
+            if not isinstance(rr_config['messages'], list):
+                return jsonify({
+                    "success": False,
+                    "message": "Invalid type for reaction_roles.messages, expected list"
+                }), 400
 
         # Update settings in database
         settings_manager = get_settings_manager()
