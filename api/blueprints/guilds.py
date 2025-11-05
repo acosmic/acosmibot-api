@@ -1,7 +1,7 @@
 """Guild management endpoints - config, permissions, stats"""
 from flask import Blueprint, jsonify, request
 from api.middleware.auth_decorators import require_auth
-from api.services.dao_imports import GuildDao, GuildUserDao
+from api.services.dao_imports import GuildDao, GuildUserDao, ReactionRoleDao
 from api.services.discord_integration import check_admin_sync, get_channels_sync, http_client, run_sync
 from models.settings_manager import SettingsManager
 import json
@@ -308,6 +308,15 @@ def get_guild_config_hybrid(guild_id):
                 # Return empty dict if parsing fails
                 settings_dict = {}
 
+        # Query actual reaction roles from database
+        try:
+            reaction_role_dao = ReactionRoleDao()
+            reaction_roles = reaction_role_dao.get_all_by_guild(int(guild_id))
+            reaction_role_messages = [rr.to_dict() for rr in reaction_roles]
+        except Exception as rr_error:
+            print(f"Error getting reaction roles: {rr_error}")
+            reaction_role_messages = []
+
         # Get live Discord data using our working HTTP client
         available_roles = []
         available_channels = get_channels_sync(guild_id)
@@ -409,12 +418,18 @@ def get_guild_config_hybrid(guild_id):
                 "notification_method": "polling"
             }
 
-        # Add default Reaction Roles settings if not present
+        # Add default Reaction Roles settings if not present, or update with actual data from database
         if "reaction_roles" not in settings_dict:
             settings_dict["reaction_roles"] = {
-                "enabled": False,
-                "messages": []
+                "enabled": len(reaction_role_messages) > 0,
+                "messages": reaction_role_messages
             }
+        else:
+            # Always use fresh data from ReactionRole table, not from settings JSON
+            settings_dict["reaction_roles"]["messages"] = reaction_role_messages
+            # Auto-enable if messages exist
+            if len(reaction_role_messages) > 0 and not settings_dict["reaction_roles"].get("enabled"):
+                settings_dict["reaction_roles"]["enabled"] = True
 
         # Build response with ONLY real data from database
         response_data = {

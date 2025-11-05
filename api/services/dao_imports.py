@@ -21,6 +21,7 @@ from Dao.AdminUserDao import AdminUserDao
 from Dao.GlobalSettingsDao import GlobalSettingsDao
 from Dao.AuditLogDao import AuditLogDao
 from Dao.GamesDao import GamesDao
+from Dao.ReactionRoleDao import ReactionRoleDao
 
 __all__ = [
     'GuildDao',
@@ -29,5 +30,6 @@ __all__ = [
     'AdminUserDao',
     'GlobalSettingsDao',
     'AuditLogDao',
-    'GamesDao'
+    'GamesDao',
+    'ReactionRoleDao'
 ]
