@@ -165,6 +165,50 @@ class SimpleDiscordHTTPClient:
             traceback.print_exc()
             return False
 
+    async def post_message(self, channel_id: int, message_data: dict):
+        """Post a message to a Discord channel"""
+        async with aiohttp.ClientSession() as session:
+            try:
+                url = f"{self.base_url}/channels/{channel_id}/messages"
+                async with session.post(url, headers=self.headers, json=message_data) as response:
+                    if response.status == 200:
+                        return await response.json()
+                    else:
+                        logger.error(f"Failed to post message to channel {channel_id}: {response.status}")
+                        error_text = await response.text()
+                        logger.error(f"Response: {error_text}")
+                        return None
+            except Exception as e:
+                logger.error(f"Error posting message: {e}")
+                return None
+
+    async def add_reaction(self, channel_id: int, message_id: int, emoji: str):
+        """Add a reaction to a Discord message"""
+        async with aiohttp.ClientSession() as session:
+            try:
+                # URL encode the emoji (custom emojis need special handling)
+                if ':' in emoji:
+                    # Custom emoji format: <:name:id> or <a:name:id>
+                    # Extract just the id part for the API
+                    emoji_for_url = emoji.split(':')[-1].rstrip('>')
+                else:
+                    # Standard emoji - URL encode it
+                    import urllib.parse
+                    emoji_for_url = urllib.parse.quote(emoji)
+
+                url = f"{self.base_url}/channels/{channel_id}/messages/{message_id}/reactions/{emoji_for_url}/@me"
+                async with session.put(url, headers=self.headers) as response:
+                    if response.status == 204:
+                        return True
+                    else:
+                        logger.error(f"Failed to add reaction to message {message_id}: {response.status}")
+                        error_text = await response.text()
+                        logger.error(f"Response: {error_text}")
+                        return False
+            except Exception as e:
+                logger.error(f"Error adding reaction: {e}")
+                return False
+
     async def get_channels(self, guild_id: str):
         """Get text and announcement channels for guild"""
         try:

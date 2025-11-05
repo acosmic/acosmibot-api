@@ -8,6 +8,7 @@ from .users import users_bp
 from .portal import portal_bp
 from .admin import admin_bp
 from .twitch import twitch_bp
+from .reaction_roles import reaction_roles_bp
 
 __all__ = [
     'utilities_bp',
@@ -17,5 +18,6 @@ __all__ = [
     'users_bp',
     'portal_bp',
     'admin_bp',
-    'twitch_bp'
+    'twitch_bp',
+    'reaction_roles_bp'
 ]
