@@ -189,21 +189,31 @@ class SimpleDiscordHTTPClient:
                 # URL encode the emoji (custom emojis need special handling)
                 if ':' in emoji:
                     # Custom emoji format: <:name:id> or <a:name:id>
-                    # Extract just the id part for the API
-                    emoji_for_url = emoji.split(':')[-1].rstrip('>')
+                    # Extract name and id for the API: name:id
+                    parts = emoji.split(':')
+                    if len(parts) >= 3:  # <:name:id> or <a:name:id>
+                        emoji_name = parts[1]
+                        emoji_id = parts[-1].rstrip('>')
+                        emoji_for_url = f"{emoji_name}:{emoji_id}"
+                    else:
+                        emoji_for_url = emoji
                 else:
                     # Standard emoji - URL encode it
                     import urllib.parse
                     emoji_for_url = urllib.parse.quote(emoji)
 
                 url = f"{self.base_url}/channels/{channel_id}/messages/{message_id}/reactions/{emoji_for_url}/@me"
+                logger.debug(f"Adding reaction to {url}")
                 async with session.put(url, headers=self.headers) as response:
                     if response.status == 204:
+                        logger.debug(f"Successfully added reaction {emoji} ({emoji_for_url})")
                         return True
                     else:
                         logger.error(f"Failed to add reaction to message {message_id}: {response.status}")
+                        logger.error(f"Original emoji format: {emoji}")
+                        logger.error(f"Extracted emoji for URL: {emoji_for_url}")
                         error_text = await response.text()
-                        logger.error(f"Response: {error_text}")
+                        logger.error(f"Discord API Response: {error_text}")
                         return False
             except Exception as e:
                 logger.error(f"Error adding reaction: {e}")

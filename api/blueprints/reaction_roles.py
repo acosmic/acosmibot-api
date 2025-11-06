@@ -238,15 +238,20 @@ def create_reaction_role(guild_id):
 
             for emoji in emojis:
                 try:
+                    logger.info(f"Adding reaction {emoji} to message {data['message_id']}")
                     reaction_added = run_sync(http_client.add_reaction(
                         int(data['channel_id']),
                         int(data['message_id']),
                         emoji
                     ))
                     if not reaction_added:
-                        logger.warning(f"Failed to add reaction {emoji} to message {data['message_id']}")
+                        logger.warning(f"Failed to add reaction {emoji} to message {data['message_id']} - HTTP request returned False")
+                    else:
+                        logger.info(f"Successfully added reaction {emoji}")
                 except Exception as e:
                     logger.error(f"Error adding reaction {emoji}: {e}")
+                    import traceback
+                    traceback.print_exc()
 
         # Return created config
         config = manager.get_reaction_config(int(data['message_id']))
