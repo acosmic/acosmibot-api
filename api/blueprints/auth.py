@@ -77,7 +77,7 @@ def get_current_user():
             avatar_url = user.avatar_url or f"https://cdn.discordapp.com/embed/avatars/{int(payload['user_id']) % 5}.png"
 
             return jsonify({
-                'id': user.id,
+                'id': str(user.id),
                 'username': user.discord_username,
                 'global_name': user.global_name,
                 'avatar': avatar_url,

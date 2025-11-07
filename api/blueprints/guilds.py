@@ -413,7 +413,7 @@ def get_guild_config_hybrid(guild_id):
                     "enabled": False,
                     "edit_message_when_vod_available": True,
                     "vod_check_interval_seconds": 300,
-                    "vod_message_suffix": "\n\n📺 **VOD Available:** [Watch Recording]({vod_url})"
+                    "vod_message_suffix": "📺 VOD Available: {vod_url}"
                 },
                 "notification_method": "polling"
             }
