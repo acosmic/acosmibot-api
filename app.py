@@ -22,8 +22,8 @@ app = create_app(env)
 
 if __name__ == '__main__':
     print(f"🚀 Starting Acosmibot API in {env} mode...")
-    print("✅ All 10 blueprints loaded:")
+    print("✅ All 12 blueprints loaded:")
     print("   - utilities, auth, twitch, leaderboards")
     print("   - users, portal, guilds, admin")
-    print("   - reaction_roles, subscriptions")
+    print("   - reaction_roles, subscriptions, custom_commands, ai_images")
     app.run(host='0.0.0.0', port=5000)
