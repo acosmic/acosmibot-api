@@ -9,8 +9,8 @@ users_bp = Blueprint('users', __name__, url_prefix='/api')
 @users_bp.route('/user/<int:user_id>')
 def get_user_info(user_id):
     try:
-        user_dao = UserDao()
-        user = user_dao.get_user(user_id)
+        with UserDao() as user_dao:
+            user = user_dao.get_user(user_id)
 
         if user:
             # Safe date formatting function
@@ -51,9 +51,8 @@ def get_user_info(user_id):
 @users_bp.route('/user/<int:user_id>/rank/currency')
 def get_user_currency_rank(user_id):
     try:
-        user_dao = UserDao()
-
-        user_rank = user_dao.get_user_rank_by_currency(user_id)
+        with UserDao() as user_dao:
+            user_rank = user_dao.get_user_rank_by_currency(user_id)
         if user_rank:
             return jsonify({
                 'rank': user_rank[-1],  # Last column is the rank
@@ -68,9 +67,8 @@ def get_user_currency_rank(user_id):
 @users_bp.route('/user/<int:user_id>/rank/exp')
 def get_user_exp_rank(user_id):
     try:
-        user_dao = UserDao()
-
-        user_rank = user_dao.get_user_rank_by_global_exp(user_id)
+        with UserDao() as user_dao:
+            user_rank = user_dao.get_user_rank_by_global_exp(user_id)
         if user_rank:
             return jsonify({
                 'rank': user_rank[-1],  # Last column is the rank
@@ -86,10 +84,9 @@ def get_user_exp_rank(user_id):
 @users_bp.route('/user/<int:user_id>/games')
 def get_user_game_stats(user_id):
     try:
-        games_dao = GamesDao()
-
-        # Get user's game statistics
-        game_stats = games_dao.get_user_game_stats(user_id)
+        with GamesDao() as games_dao:
+            # Get user's game statistics
+            game_stats = games_dao.get_user_game_stats(user_id)
 
         if game_stats:
             # Use the pre-calculated 'total' stats from GamesDao
@@ -148,15 +145,14 @@ def get_user_game_stats(user_id):
 @users_bp.route('/stats/global')
 def get_global_stats():
     try:
-        user_dao = UserDao()
-
-        stats = {
-            'total_users': user_dao.get_total_active_users(),
-            'total_messages': user_dao.get_total_messages(),
-            'total_reactions': user_dao.get_total_reactions(),
-            'total_currency': user_dao.get_total_currency(),
-            'total_exp': user_dao.get_total_global_exp()
-        }
+        with UserDao() as user_dao:
+            stats = {
+                'total_users': user_dao.get_total_active_users(),
+                'total_messages': user_dao.get_total_messages(),
+                'total_reactions': user_dao.get_total_reactions(),
+                'total_currency': user_dao.get_total_currency(),
+                'total_exp': user_dao.get_total_global_exp()
+            }
 
         return jsonify(stats)
     except Exception as e:
@@ -166,10 +162,9 @@ def get_global_stats():
 @users_bp.route('/user/<int:user_id>/guilds')
 def get_user_guilds_simple(user_id):
     try:
-        guild_user_dao = GuildUserDao()
-        
-        # Get all guilds for this user
-        guild_users = guild_user_dao.get_user_guilds(user_id)
+        with GuildUserDao() as guild_user_dao:
+            # Get all guilds for this user
+            guild_users = guild_user_dao.get_user_guilds(user_id)
         
         if guild_users:
             guilds = []
@@ -204,18 +199,17 @@ def get_user_guilds_simple(user_id):
 def get_user_guild_stats(guild_id, user_id):
     """Get user statistics for a specific guild"""
     try:
-        guild_user_dao = GuildUserDao()
-        
-        # Check if requesting user is a member of this guild
-        requester_guild_user = guild_user_dao.get_guild_user(int(request.user_id), int(guild_id))
-        if not requester_guild_user or not requester_guild_user.is_active:
-            return jsonify({
-                "success": False,
-                "message": "You are not a member of this server"
-            }), 403
-        
-        # Get the target user's stats
-        guild_user = guild_user_dao.get_guild_user(int(user_id), int(guild_id))
+        with GuildUserDao() as guild_user_dao:
+            # Check if requesting user is a member of this guild
+            requester_guild_user = guild_user_dao.get_guild_user(int(request.user_id), int(guild_id))
+            if not requester_guild_user or not requester_guild_user.is_active:
+                return jsonify({
+                    "success": False,
+                    "message": "You are not a member of this server"
+                }), 403
+
+            # Get the target user's stats
+            guild_user = guild_user_dao.get_guild_user(int(user_id), int(guild_id))
         
         if guild_user and guild_user.is_active:
             return jsonify({

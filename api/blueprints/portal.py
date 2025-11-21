@@ -1,8 +1,18 @@
 """Cross-server portal endpoints"""
+import sys
+from pathlib import Path
 from flask import Blueprint, jsonify, request
 from api.middleware.auth_decorators import require_auth
 from api.services.dao_imports import GuildDao
 from api.services.discord_integration import check_admin_sync
+
+# Ensure bot path is in sys.path for models import
+current_dir = Path(__file__).parent.parent.parent
+bot_project_path = current_dir.parent / "acosmibot"
+if str(bot_project_path) not in sys.path:
+    sys.path.insert(0, str(bot_project_path))
+
+from models.settings_manager import SettingsManager
 
 portal_bp = Blueprint('portal', __name__, url_prefix='/api')
 
@@ -20,24 +30,16 @@ def get_portal_config(guild_id):
                 "message": "You don't have permission to manage this server"
             }), 403
 
-        # Get guild settings
-        guild_dao = GuildDao()
-        settings = guild_dao.get_guild_settings(int(guild_id))
+        # Get guild settings from SettingsManager
+        try:
+            settings_manager = SettingsManager.get_instance()
+        except:
+            # If settings manager not initialized, create one
+            with GuildDao() as guild_dao:
+                settings_manager = SettingsManager(guild_dao)
 
-        # Extract portal settings or use defaults
-        portal_config = settings.get('cross_server_portal', {
-            'enabled': False,
-            'channel_id': None,
-            'public_listing': True,
-            'display_name': None,
-            'portal_cost': 1000
-        }) if settings else {
-            'enabled': False,
-            'channel_id': None,
-            'public_listing': True,
-            'display_name': None,
-            'portal_cost': 1000
-        }
+        guild_settings = settings_manager.get_guild_settings(guild_id)
+        portal_config = guild_settings.cross_server_portal.dict()
 
         return jsonify({
             "success": True,
@@ -75,21 +77,17 @@ def update_portal_config(guild_id):
             }), 400
 
         # Get current settings
-        guild_dao = GuildDao()
-        settings = guild_dao.get_guild_settings(int(guild_id)) or {}
+        try:
+            settings_manager = SettingsManager.get_instance()
+        except:
+            # If settings manager not initialized, create one
+            with GuildDao() as guild_dao:
+                settings_manager = SettingsManager(guild_dao)
 
-        # Initialize portal config if it doesn't exist
-        if 'cross_server_portal' not in settings:
-            settings['cross_server_portal'] = {
-                'enabled': False,
-                'channel_id': None,
-                'public_listing': True,
-                'display_name': None,
-                'portal_cost': 1000
-            }
+        guild_settings = settings_manager.get_guild_settings(guild_id)
 
-        # Update portal settings
-        portal_config = settings['cross_server_portal']
+        # Update portal settings from request
+        portal_config = guild_settings.cross_server_portal.dict()
         if 'enabled' in data:
             portal_config['enabled'] = bool(data['enabled'])
         if 'channel_id' in data:
@@ -101,8 +99,12 @@ def update_portal_config(guild_id):
         if 'portal_cost' in data:
             portal_config['portal_cost'] = int(data['portal_cost'])
 
+        # Update the settings dict with the new portal config
+        settings_dict = guild_settings.dict()
+        settings_dict['cross_server_portal'] = portal_config
+
         # Save updated settings
-        success = guild_dao.update_guild_settings(int(guild_id), settings)
+        success = settings_manager.update_settings_dict(guild_id, settings_dict)
 
         if success:
             return jsonify({
@@ -135,28 +137,31 @@ def search_portals():
         query = request.args.get('q', '')
 
         # Get all guilds
-        guild_dao = GuildDao()
-        all_guilds = guild_dao.get_all_guilds()
+        with GuildDao() as guild_dao:
+            all_guilds = guild_dao.get_all_guilds()
+
+        # Initialize settings manager
+        try:
+            settings_manager = SettingsManager.get_instance()
+        except:
+            settings_manager = SettingsManager(guild_dao)
 
         results = []
         for guild_entity in all_guilds:
-            # Get portal settings
-            settings = guild_dao.get_guild_settings(guild_entity.id)
-            if not settings:
-                continue
-
-            portal_config = settings.get('cross_server_portal', {})
+            # Get portal settings from SettingsManager
+            guild_settings = settings_manager.get_guild_settings(str(guild_entity.id))
+            portal_config = guild_settings.cross_server_portal
 
             # Check if portals enabled and publicly listed
-            if not portal_config.get('enabled', False):
+            if not portal_config.enabled:
                 continue
-            if not portal_config.get('public_listing', True):
+            if not portal_config.public_listing:
                 continue
-            if not portal_config.get('channel_id'):
+            if not portal_config.channel_id:
                 continue
 
             # Get display name
-            display_name = portal_config.get('display_name') or guild_entity.name
+            display_name = portal_config.display_name or guild_entity.name
 
             # Check if query matches (case insensitive)
             if query.lower() in display_name.lower():
@@ -164,7 +169,7 @@ def search_portals():
                     'id': str(guild_entity.id),
                     'name': display_name,
                     'member_count': guild_entity.member_count,
-                    'portal_cost': portal_config.get('portal_cost', 1000)
+                    'portal_cost': portal_config.portal_cost
                 })
 
         return jsonify({

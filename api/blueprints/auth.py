@@ -54,8 +54,8 @@ def get_current_user():
         payload = jwt.decode(token, os.getenv('JWT_SECRET'), algorithms=['HS256'])
 
         # Get fresh user data from database
-        user_dao = UserDao()
-        user = user_dao.get_user(int(payload['user_id']))
+        with UserDao() as user_dao:
+            user = user_dao.get_user(int(payload['user_id']))
 
         if user:
             # Safely format dates - handle both datetime objects and strings

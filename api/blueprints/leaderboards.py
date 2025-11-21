@@ -14,10 +14,9 @@ leaderboards_bp = Blueprint('leaderboards', __name__, url_prefix='/api')
 def get_currency_leaderboard():
     """Get global currency leaderboard"""
     try:
-        user_dao = UserDao()
-
         limit = min(int(request.args.get('limit', 10)), 50)  # Default 10, max 50
-        top_users = user_dao.get_top_users_by_currency(limit)
+        with UserDao() as user_dao:
+            top_users = user_dao.get_top_users_by_currency(limit)
 
         return jsonify(top_users)
     except Exception as e:
@@ -28,10 +27,9 @@ def get_currency_leaderboard():
 def get_messages_leaderboard():
     """Get global messages leaderboard"""
     try:
-        user_dao = UserDao()
-
         limit = min(int(request.args.get('limit', 10)), 50)
-        top_users = user_dao.get_top_users_by_messages(limit)
+        with UserDao() as user_dao:
+            top_users = user_dao.get_top_users_by_messages(limit)
 
         return jsonify(top_users)
     except Exception as e:
@@ -42,10 +40,9 @@ def get_messages_leaderboard():
 def get_level_leaderboard():
     """Get global level leaderboard"""
     try:
-        user_dao = UserDao()
-
         limit = min(int(request.args.get('limit', 10)), 50)
-        top_users = user_dao.get_top_users_by_global_level(limit)
+        with UserDao() as user_dao:
+            top_users = user_dao.get_top_users_by_global_level(limit)
 
         return jsonify(top_users)
     except Exception as e:
@@ -61,18 +58,17 @@ def get_level_leaderboard():
 def get_guild_level_leaderboard(guild_id):
     """Get level leaderboard for a specific guild (accessible to all guild members)"""
     try:
-        guild_user_dao = GuildUserDao()
+        with GuildUserDao() as guild_user_dao:
+            # Check if user is a member of this guild
+            guild_user = guild_user_dao.get_guild_user(int(request.user_id), int(guild_id))
+            if not guild_user or not guild_user.is_active:
+                return jsonify({
+                    "success": False,
+                    "message": "You are not a member of this server"
+                }), 403
 
-        # Check if user is a member of this guild
-        guild_user = guild_user_dao.get_guild_user(int(request.user_id), int(guild_id))
-        if not guild_user or not guild_user.is_active:
-            return jsonify({
-                "success": False,
-                "message": "You are not a member of this server"
-            }), 403
-
-        limit = min(int(request.args.get('limit', 10)), 50)
-        top_users = guild_user_dao.get_top_users_by_guild_level(int(guild_id), limit)
+            limit = min(int(request.args.get('limit', 10)), 50)
+            top_users = guild_user_dao.get_top_users_by_guild_level(int(guild_id), limit)
 
         return jsonify({
             "success": True,
@@ -93,18 +89,17 @@ def get_guild_level_leaderboard(guild_id):
 def get_guild_messages_leaderboard(guild_id):
     """Get messages leaderboard for a specific guild (accessible to all guild members)"""
     try:
-        guild_user_dao = GuildUserDao()
+        with GuildUserDao() as guild_user_dao:
+            # Check if user is a member of this guild
+            guild_user = guild_user_dao.get_guild_user(int(request.user_id), int(guild_id))
+            if not guild_user or not guild_user.is_active:
+                return jsonify({
+                    "success": False,
+                    "message": "You are not a member of this server"
+                }), 403
 
-        # Check if user is a member of this guild
-        guild_user = guild_user_dao.get_guild_user(int(request.user_id), int(guild_id))
-        if not guild_user or not guild_user.is_active:
-            return jsonify({
-                "success": False,
-                "message": "You are not a member of this server"
-            }), 403
-
-        limit = min(int(request.args.get('limit', 10)), 50)
-        top_users = guild_user_dao.get_top_users_by_messages_in_guild(int(guild_id), limit)
+            limit = min(int(request.args.get('limit', 10)), 50)
+            top_users = guild_user_dao.get_top_users_by_messages_in_guild(int(guild_id), limit)
 
         return jsonify({
             "success": True,
@@ -125,29 +120,27 @@ def get_guild_messages_leaderboard(guild_id):
 def get_guild_messages_leaderboard_db(guild_id):
     """Get messages leaderboard for a specific guild using database-only approach (accessible to all guild members)"""
     try:
-        guild_dao = GuildDao()
-        guild_user_dao = GuildUserDao()
+        with GuildUserDao() as guild_user_dao, GuildDao() as guild_dao:
+            # Check if user is a member of this guild
+            guild_user = guild_user_dao.get_guild_user(int(request.user_id), int(guild_id))
+            if not guild_user or not guild_user.is_active:
+                return jsonify({
+                    "success": False,
+                    "message": "You are not a member of this server"
+                }), 403
 
-        # Check if user is a member of this guild
-        guild_user = guild_user_dao.get_guild_user(int(request.user_id), int(guild_id))
-        if not guild_user or not guild_user.is_active:
-            return jsonify({
-                "success": False,
-                "message": "You are not a member of this server"
-            }), 403
+            limit = min(int(request.args.get('limit', 10)), 50)
 
-        limit = min(int(request.args.get('limit', 10)), 50)
+            # Direct SQL query for messages leaderboard
+            sql = """
+                  SELECT gu.user_id, u.discord_username, gu.messages_sent, gu.level, gu.exp
+                  FROM GuildUsers gu
+                           LEFT JOIN Users u ON gu.user_id = u.id
+                  WHERE gu.guild_id = %s               AND gu.is_active = TRUE
+                  ORDER BY gu.messages_sent DESC
+                      LIMIT %s               """
 
-        # Direct SQL query for messages leaderboard
-        sql = """
-              SELECT gu.user_id, u.discord_username, gu.messages_sent, gu.level, gu.exp
-              FROM GuildUsers gu
-                       LEFT JOIN Users u ON gu.user_id = u.id
-              WHERE gu.guild_id = %s               AND gu.is_active = TRUE
-              ORDER BY gu.messages_sent DESC
-                  LIMIT %s               """
-
-        results = guild_dao.execute_query(sql, (int(guild_id), limit))
+            results = guild_dao.execute_query(sql, (int(guild_id), limit))
 
         leaderboard = []
         for i, row in enumerate(results):

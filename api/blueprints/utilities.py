@@ -20,13 +20,12 @@ def test_import():
     """Test that bot module imports work"""
     try:
         # Test imports
-        user_dao = UserDao()
-
-        return jsonify({
-            'status': 'success',
-            'message': 'Successfully imported bot modules!',
-            'imports': ['UserDao', 'AppLogger']
-        })
+        with UserDao() as user_dao:
+            return jsonify({
+                'status': 'success',
+                'message': 'Successfully imported bot modules!',
+                'imports': ['UserDao', 'AppLogger']
+            })
     except ImportError as e:
         return jsonify({
             'status': 'error',
@@ -38,13 +37,12 @@ def test_import():
 def test_db():
     """Test database connection"""
     try:
-        user_dao = UserDao()
-
-        return jsonify({
-            'status': 'success',
-            'message': 'Database connection working!',
-            'dao_initialized': True
-        })
+        with UserDao() as user_dao:
+            return jsonify({
+                'status': 'success',
+                'message': 'Database connection working!',
+                'dao_initialized': True
+            })
     except Exception as e:
         return jsonify({
             'status': 'error',
@@ -100,18 +98,18 @@ def debug_guilds():
 def create_test_token(user_id):
     """Create a test JWT token for a specific user ID (REMOVE IN PRODUCTION!)"""
     try:
-        user_dao = UserDao()
-        user = user_dao.get_user(user_id)
+        with UserDao() as user_dao:
+            user = user_dao.get_user(user_id)
 
-        if not user:
-            return jsonify({'error': 'User not found in database'}), 404
+            if not user:
+                return jsonify({'error': 'User not found in database'}), 404
 
-        # Create test user data for JWT
-        test_user_data = {
-            'id': str(user.id),
-            'username': user.discord_username,
-            'global_name': user.global_name
-        }
+            # Create test user data for JWT
+            test_user_data = {
+                'id': str(user.id),
+                'username': user.discord_username,
+                'global_name': user.global_name
+            }
 
         # Create JWT
         from api.services.discord_oauth import DiscordOAuthService

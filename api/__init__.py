@@ -20,7 +20,8 @@ def create_app(config_name='default'):
     # Register blueprints
     from api.blueprints import (
         utilities_bp, auth_bp, guilds_bp, leaderboards_bp,
-        users_bp, portal_bp, admin_bp, twitch_bp, reaction_roles_bp
+        users_bp, portal_bp, admin_bp, twitch_bp, reaction_roles_bp,
+        subscriptions_bp
     )
 
     app.register_blueprint(utilities_bp)
@@ -32,5 +33,6 @@ def create_app(config_name='default'):
     app.register_blueprint(admin_bp)
     app.register_blueprint(twitch_bp)
     app.register_blueprint(reaction_roles_bp)
+    app.register_blueprint(subscriptions_bp)
 
     return app

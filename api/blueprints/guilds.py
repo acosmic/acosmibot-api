@@ -1,21 +1,42 @@
 """Guild management endpoints - config, permissions, stats"""
+import sys
+from pathlib import Path
 from flask import Blueprint, jsonify, request
 from api.middleware.auth_decorators import require_auth
 from api.services.dao_imports import GuildDao, GuildUserDao, ReactionRoleDao
 from api.services.discord_integration import check_admin_sync, get_channels_sync, http_client, run_sync
-from models.settings_manager import SettingsManager
 import json
 from datetime import datetime
 import logging
+
+# Ensure bot path is in sys.path for models import
+current_dir = Path(__file__).parent.parent.parent
+bot_project_path = current_dir.parent / "acosmibot"
+if str(bot_project_path) not in sys.path:
+    sys.path.insert(0, str(bot_project_path))
+
+from models.settings_manager import SettingsManager
+from utils.premium_checker import PremiumChecker
 
 logger = logging.getLogger(__name__)
 guilds_bp = Blueprint('guilds', __name__, url_prefix='/api')
 
 
 def get_settings_manager():
-    """Get settings manager instance"""
-    guild_dao = GuildDao()
-    return SettingsManager(guild_dao)
+    """
+    Get settings manager singleton instance.
+
+    Initializes the singleton on first call, then returns the same instance.
+    This is safe to call multiple times.
+    """
+    try:
+        # Try to get existing singleton instance
+        return SettingsManager.get_instance()
+    except ValueError:
+        # Not yet initialized, initialize it now
+        with GuildDao() as guild_dao:
+            settings_manager = SettingsManager(guild_dao)
+            return settings_manager
 
 
 @guilds_bp.route('/user/guilds', methods=['GET'])
@@ -23,24 +44,20 @@ def get_settings_manager():
 def get_user_guilds():
     """Get guilds from database with actual Discord permissions"""
     try:
+        with GuildDao() as guild_dao:
+            # Get guilds where user is a member
+            user_guilds = []
 
-        guild_user_dao = GuildUserDao()
-        guild_dao = GuildDao()
+            # Query database for guilds this user is in
+            sql = """
+                  SELECT DISTINCT g.id, g.name, g.owner_id
+                  FROM Guilds g
+                           JOIN GuildUsers gu ON g.id = gu.guild_id
+                  WHERE gu.user_id = %s \
+                    AND gu.is_active = TRUE \
+                  """
 
-        # Get guilds where user is a member
-        user_guilds = []
-
-        # Query database for guilds this user is in
-        sql = """
-              SELECT DISTINCT g.id, g.name, g.owner_id
-              FROM Guilds g
-                       JOIN GuildUsers gu ON g.id = gu.guild_id
-              WHERE gu.user_id = %s \
-                AND gu.is_active = TRUE \
-              """
-
-        guild_dao = GuildDao()
-        results = guild_dao.execute_query(sql, (int(request.user_id),))
+            results = guild_dao.execute_query(sql, (int(request.user_id),))
 
         if results:
             for row in results:
@@ -129,21 +146,18 @@ def get_user_guilds():
 def get_user_guild_permissions(guild_id):
     """Get user's permissions in a specific guild"""
     try:
+        with GuildDao() as guild_dao, GuildUserDao() as guild_user_dao:
+            # Check if user is a member of this guild
+            guild_user = guild_user_dao.get_guild_user(int(request.user_id), int(guild_id))
+            if not guild_user or not guild_user.is_active:
+                return jsonify({
+                    "success": False,
+                    "message": "You are not a member of this server"
+                }), 403
 
-        guild_dao = GuildDao()
-        guild_user_dao = GuildUserDao()
-
-        # Check if user is a member of this guild
-        guild_user = guild_user_dao.get_guild_user(int(request.user_id), int(guild_id))
-        if not guild_user or not guild_user.is_active:
-            return jsonify({
-                "success": False,
-                "message": "You are not a member of this server"
-            }), 403
-
-        # Get guild info to check ownership
-        guild = guild_dao.find_by_id(int(guild_id))
-        is_owner = guild and str(guild.owner_id) == request.user_id
+            # Get guild info to check ownership
+            guild = guild_dao.find_by_id(int(guild_id))
+            is_owner = guild and str(guild.owner_id) == request.user_id
 
         # Check if user has admin permissions via Discord API
         has_admin = False
@@ -184,60 +198,57 @@ def get_user_guild_permissions(guild_id):
 def get_guild_stats_db_only(guild_id):
     """Get guild statistics using database-only approach (accessible to all guild members)"""
     try:
+        with GuildDao() as guild_dao, GuildUserDao() as guild_user_dao:
+            # Check if user is a member of this guild
+            guild_user = guild_user_dao.get_guild_user(int(request.user_id), int(guild_id))
+            if not guild_user or not guild_user.is_active:
+                return jsonify({
+                    "success": False,
+                    "message": "You are not a member of this server"
+                }), 403
 
-        guild_dao = GuildDao()
-        guild_user_dao = GuildUserDao()
+            # Get guild record
+            guild_record = guild_dao.find_by_id(int(guild_id))
+            if not guild_record:
+                return jsonify({
+                    "success": False,
+                    "message": "Guild not found"
+                }), 404
 
-        # Check if user is a member of this guild
-        guild_user = guild_user_dao.get_guild_user(int(request.user_id), int(guild_id))
-        if not guild_user or not guild_user.is_active:
-            return jsonify({
-                "success": False,
-                "message": "You are not a member of this server"
-            }), 403
+            # Get basic stats using direct SQL queries
+            try:
+                # Count active members
+                active_members_sql = "SELECT COUNT(*) FROM GuildUsers WHERE guild_id = %s AND is_active = TRUE"
+                active_members_result = guild_dao.execute_query(active_members_sql, (int(guild_id),))
+                active_members = active_members_result[0][0] if active_members_result else 0
 
-        # Get guild record
-        guild_record = guild_dao.find_by_id(int(guild_id))
-        if not guild_record:
-            return jsonify({
-                "success": False,
-                "message": "Guild not found"
-            }), 404
+                # Total messages in guild
+                total_messages_sql = "SELECT SUM(messages_sent) FROM GuildUsers WHERE guild_id = %s AND is_active = TRUE"
+                total_messages_result = guild_dao.execute_query(total_messages_sql, (int(guild_id),))
+                total_messages = total_messages_result[0][0] if total_messages_result and total_messages_result[0][0] else 0
 
-        # Get basic stats using direct SQL queries
-        try:
-            # Count active members
-            active_members_sql = "SELECT COUNT(*) FROM GuildUsers WHERE guild_id = %s AND is_active = TRUE"
-            active_members_result = guild_dao.execute_query(active_members_sql, (int(guild_id),))
-            active_members = active_members_result[0][0] if active_members_result else 0
+                # Total exp in guild
+                total_exp_sql = "SELECT SUM(exp) FROM GuildUsers WHERE guild_id = %s AND is_active = TRUE"
+                total_exp_result = guild_dao.execute_query(total_exp_sql, (int(guild_id),))
+                total_exp = total_exp_result[0][0] if total_exp_result and total_exp_result[0][0] else 0
 
-            # Total messages in guild
-            total_messages_sql = "SELECT SUM(messages_sent) FROM GuildUsers WHERE guild_id = %s AND is_active = TRUE"
-            total_messages_result = guild_dao.execute_query(total_messages_sql, (int(guild_id),))
-            total_messages = total_messages_result[0][0] if total_messages_result and total_messages_result[0][0] else 0
+                # Highest level
+                highest_level_sql = "SELECT MAX(level) FROM GuildUsers WHERE guild_id = %s AND is_active = TRUE"
+                highest_level_result = guild_dao.execute_query(highest_level_sql, (int(guild_id),))
+                highest_level = highest_level_result[0][0] if highest_level_result and highest_level_result[0][0] else 0
 
-            # Total exp in guild
-            total_exp_sql = "SELECT SUM(exp) FROM GuildUsers WHERE guild_id = %s AND is_active = TRUE"
-            total_exp_result = guild_dao.execute_query(total_exp_sql, (int(guild_id),))
-            total_exp = total_exp_result[0][0] if total_exp_result and total_exp_result[0][0] else 0
+                # Average level
+                avg_level_sql = "SELECT AVG(level) FROM GuildUsers WHERE guild_id = %s AND is_active = TRUE"
+                avg_level_result = guild_dao.execute_query(avg_level_sql, (int(guild_id),))
+                avg_level = round(avg_level_result[0][0], 1) if avg_level_result and avg_level_result[0][0] else 0
 
-            # Highest level
-            highest_level_sql = "SELECT MAX(level) FROM GuildUsers WHERE guild_id = %s AND is_active = TRUE"
-            highest_level_result = guild_dao.execute_query(highest_level_sql, (int(guild_id),))
-            highest_level = highest_level_result[0][0] if highest_level_result and highest_level_result[0][0] else 0
-
-            # Average level
-            avg_level_sql = "SELECT AVG(level) FROM GuildUsers WHERE guild_id = %s AND is_active = TRUE"
-            avg_level_result = guild_dao.execute_query(avg_level_sql, (int(guild_id),))
-            avg_level = round(avg_level_result[0][0], 1) if avg_level_result and avg_level_result[0][0] else 0
-
-        except Exception as e:
-            # Fallback values if queries fail
-            active_members = guild_record.member_count or 0
-            total_messages = 0
-            total_exp = 0
-            highest_level = 0
-            avg_level = 0
+            except Exception as e:
+                # Fallback values if queries fail
+                active_members = guild_record.member_count or 0
+                total_messages = 0
+                total_exp = 0
+                highest_level = 0
+                avg_level = 0
 
         guild_stats = {
             "guild_id": guild_id,
@@ -291,22 +302,10 @@ def get_guild_config_hybrid(guild_id):
                 "message": "Guild not found"
             }), 404
 
-        # Get guild from database
-        guild_dao = GuildDao()
-        guild = guild_dao.find_by_id(int(guild_id))
-
-        # Parse settings JSON from database
-        settings_dict = {}
-        if guild and guild.settings:
-            try:
-                if isinstance(guild.settings, str):
-                    settings_dict = json.loads(guild.settings)
-                else:
-                    settings_dict = guild.settings
-            except json.JSONDecodeError as e:
-                print(f"Error parsing guild settings JSON: {e}")
-                # Return empty dict if parsing fails
-                settings_dict = {}
+        # Get guild settings directly from GuildDao to get COMPLETE settings
+        # (not just leveling/roles which is what SettingsManager returns)
+        with GuildDao() as guild_dao:
+            settings_dict = guild_dao.get_guild_settings(int(guild_id)) or {}
 
         # Query actual reaction roles from database
         try:
@@ -499,12 +498,14 @@ def update_guild_config_hybrid(guild_id):
 
         # Validate Twitch settings if present
         if 'twitch' in settings and settings['twitch'].get('enabled'):
-            # Validate tracked_streamers limit (2 max for non-premium)
+            # Validate tracked_streamers limit based on tier
             tracked_streamers = settings['twitch'].get('tracked_streamers', [])
-            if len(tracked_streamers) > 2:
+            can_add, error_msg = PremiumChecker.check_twitch_limit(int(guild_id), len(tracked_streamers))
+
+            if not can_add:
                 return jsonify({
                     "success": False,
-                    "message": "Maximum 2 streamers allowed (upgrade to premium for more)"
+                    "message": error_msg
                 }), 400
 
             # Validate each streamer has required fields
@@ -720,7 +721,7 @@ def update_guild_config_hybrid(guild_id):
 
         # Update settings in database
         settings_manager = get_settings_manager()
-        success = settings_manager.guild_dao.update_guild_settings(int(guild_id), settings)
+        success = settings_manager.update_settings_dict(guild_id, settings)
 
         if not success:
             return jsonify({
@@ -773,10 +774,9 @@ def update_leveling_settings(guild_id):
                 "error": str(e)
             }), 400
 
-        # Get current settings
-        settings_manager = get_settings_manager()
-        settings = settings_manager.get_guild_settings(guild_id)
-        settings_dict = settings.dict()
+        # Get current settings - use GuildDao directly to get complete settings
+        with GuildDao() as guild_dao:
+            settings_dict = guild_dao.get_guild_settings(int(guild_id)) or {}
 
         # Update leveling settings
         if 'leveling' not in settings_dict:
@@ -791,7 +791,7 @@ def update_leveling_settings(guild_id):
         })
 
         # Save updated settings
-        success = settings_manager.guild_dao.update_guild_settings(int(guild_id), settings_dict)
+        success = settings_manager.update_settings_dict(guild_id, settings_dict)
 
         if success:
             return jsonify({
@@ -836,10 +836,9 @@ def update_ai_settings(guild_id):
                 "error": str(e)
             }), 400
 
-        # Get current settings
-        settings_manager = get_settings_manager()
-        settings = settings_manager.get_guild_settings(guild_id)
-        settings_dict = settings.dict()
+        # Get current settings - use GuildDao directly to get complete settings
+        with GuildDao() as guild_dao:
+            settings_dict = guild_dao.get_guild_settings(int(guild_id)) or {}
 
         # Update AI settings
         if 'ai' not in settings_dict:
@@ -853,7 +852,7 @@ def update_ai_settings(guild_id):
         })
 
         # Save updated settings
-        success = settings_manager.guild_dao.update_guild_settings(int(guild_id), settings_dict)
+        success = settings_manager.update_settings_dict(guild_id, settings_dict)
 
         if success:
             return jsonify({

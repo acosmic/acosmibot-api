@@ -1,4 +1,8 @@
 """Admin panel endpoints - settings, guilds, audit logs, users"""
+import json
+import logging
+import sys
+from pathlib import Path
 from flask import Blueprint, jsonify, request
 from api.middleware.auth_decorators import require_auth
 from api.middleware.admin_auth import require_admin, require_super_admin, log_admin_action, check_is_admin
@@ -6,7 +10,14 @@ from api.services.dao_imports import (
     AdminUserDao, GlobalSettingsDao, AuditLogDao,
     GuildDao, UserDao
 )
-import logging
+
+# Ensure bot path is in sys.path for models import
+current_dir = Path(__file__).parent.parent.parent
+bot_project_path = current_dir.parent / "acosmibot"
+if str(bot_project_path) not in sys.path:
+    sys.path.insert(0, str(bot_project_path))
+
+from models.settings_manager import SettingsManager
 
 admin_bp = Blueprint('admin', __name__, url_prefix='/api/admin')
 logger = logging.getLogger(__name__)
@@ -18,8 +29,8 @@ def check_admin_status():
     """Check if the current user is an admin"""
     try:
         is_admin = check_is_admin(request.user_id)
-        admin_dao = AdminUserDao()
-        admin_info = admin_dao.get_admin_by_discord_id(request.user_id) if is_admin else None
+        with AdminUserDao() as admin_dao:
+            admin_info = admin_dao.get_admin_by_discord_id(request.user_id) if is_admin else None
 
         return jsonify({
             "success": True,
@@ -39,8 +50,8 @@ def check_admin_status():
 def get_global_settings():
     """Get all global bot settings"""
     try:
-        settings_dao = GlobalSettingsDao()
-        grouped_settings = settings_dao.get_all_settings_grouped()
+        with GlobalSettingsDao() as settings_dao:
+            grouped_settings = settings_dao.get_all_settings_grouped()
 
         return jsonify({
             "success": True,
@@ -162,13 +173,15 @@ def get_all_guilds_admin():
             # Get member count
             member_count = guild_dao.get_active_member_count(guild.id)
 
-            # Parse settings
-            settings = {}
-            if guild.settings:
-                try:
-                    settings = json.loads(guild.settings) if isinstance(guild.settings, str) else guild.settings
-                except:
-                    settings = {}
+            # Get settings from SettingsManager
+            try:
+                settings_manager = SettingsManager.get_instance()
+                guild_settings = settings_manager.get_guild_settings(str(guild.id))
+            except:
+                # If settings manager not initialized, create one
+                with GuildDao() as guild_dao_temp:
+                    settings_manager = SettingsManager(guild_dao_temp)
+                    guild_settings = settings_manager.get_guild_settings(str(guild.id))
 
             guilds_data.append({
                 'id': str(guild.id),
@@ -179,10 +192,10 @@ def get_all_guilds_admin():
                 'created_at': guild.created.isoformat() if guild.created else None,
                 'last_active': guild.last_active.isoformat() if guild.last_active else None,
                 'settings_enabled': {
-                    'leveling': settings.get('leveling', {}).get('enabled', False),
-                    'ai': settings.get('ai', {}).get('enabled', False),
-                    'economy': settings.get('economy', {}).get('enabled', False),
-                    'portal': settings.get('cross_server_portal', {}).get('enabled', False)
+                    'leveling': guild_settings.leveling.enabled,
+                    'ai': guild_settings.ai.enabled,
+                    'economy': guild_settings.games.enabled if hasattr(guild_settings.games, 'enabled') else False,
+                    'portal': guild_settings.cross_server_portal.enabled
                 }
             })
 
@@ -225,13 +238,15 @@ def get_guild_details_admin(guild_id):
         # Get detailed stats
         member_count = guild_dao.get_active_member_count(guild.id)
 
-        # Parse settings
-        settings = {}
-        if guild.settings:
-            try:
-                settings = json.loads(guild.settings) if isinstance(guild.settings, str) else guild.settings
-            except:
-                settings = {}
+        # Get settings from SettingsManager
+        try:
+            settings_manager = SettingsManager.get_instance()
+            guild_settings = settings_manager.get_guild_settings(str(guild.id))
+        except:
+            # If settings manager not initialized, create one
+            with GuildDao() as guild_dao_temp:
+                settings_manager = SettingsManager(guild_dao_temp)
+            guild_settings = settings_manager.get_guild_settings(str(guild.id))
 
         guild_data = {
             'id': str(guild.id),
@@ -241,7 +256,7 @@ def get_guild_details_admin(guild_id):
             'active': guild.active,
             'created_at': guild.created.isoformat() if guild.created else None,
             'last_active': guild.last_active.isoformat() if guild.last_active else None,
-            'settings': settings
+            'settings': guild_settings.dict()
         }
 
         return jsonify({

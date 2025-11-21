@@ -9,6 +9,7 @@ from .portal import portal_bp
 from .admin import admin_bp
 from .twitch import twitch_bp
 from .reaction_roles import reaction_roles_bp
+from .subscriptions import subscriptions_bp
 
 __all__ = [
     'utilities_bp',
@@ -19,5 +20,6 @@ __all__ = [
     'portal_bp',
     'admin_bp',
     'twitch_bp',
-    'reaction_roles_bp'
+    'reaction_roles_bp',
+    'subscriptions_bp'
 ]

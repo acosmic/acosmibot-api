@@ -15,6 +15,7 @@ reaction_roles_bp = Blueprint('reaction_roles', __name__, url_prefix='/api')
 try:
     from models.reaction_role_manager import ReactionRoleManager
     from Dao.ReactionRoleDao import ReactionRoleDao
+    from utils.premium_checker import PremiumChecker
 except ImportError:
     # Try adding bot path to sys.path
     bot_path = os.path.join(os.path.dirname(__file__), '../../acosmibot')
@@ -23,12 +24,13 @@ except ImportError:
 
     from models.reaction_role_manager import ReactionRoleManager
     from Dao.ReactionRoleDao import ReactionRoleDao
+    from utils.premium_checker import PremiumChecker
 
 
 def get_reaction_role_manager():
     """Get reaction role manager instance"""
-    dao = ReactionRoleDao()
-    return ReactionRoleManager(dao)
+    with ReactionRoleDao() as dao:
+        return ReactionRoleManager(dao)
 
 
 @reaction_roles_bp.route('/guilds/<guild_id>/reaction-roles', methods=['GET'])
@@ -72,6 +74,17 @@ def create_reaction_role(guild_id):
             return jsonify({
                 "success": False,
                 "message": "You don't have permission to manage this server"
+            }), 403
+
+        # Check premium tier and reaction role limit
+        manager = get_reaction_role_manager()
+        existing_count = len(manager.get_all_for_guild(int(guild_id)))
+
+        can_create, error_msg = PremiumChecker.check_reaction_role_limit(int(guild_id), existing_count)
+        if not can_create:
+            return jsonify({
+                "success": False,
+                "message": error_msg
             }), 403
 
         data = request.get_json()
