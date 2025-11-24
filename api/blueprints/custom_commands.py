@@ -69,7 +69,7 @@ def validate_embed_config(embed_config: dict) -> tuple:
 
 @custom_commands_bp.route('/guilds/<guild_id>/custom-commands', methods=['GET'])
 @require_auth
-def get_custom_commands(guild_id, current_user):
+def get_custom_commands(guild_id):
     """
     Get all custom commands for a guild
 
@@ -83,7 +83,7 @@ def get_custom_commands(guild_id, current_user):
     """
     try:
         # Check if user is admin
-        is_admin = check_admin_sync(guild_id, current_user['id'])
+        is_admin = check_admin_sync(request.user_id, guild_id)
         if not is_admin:
             return jsonify({
                 "success": False,
@@ -116,7 +116,7 @@ def get_custom_commands(guild_id, current_user):
 
 @custom_commands_bp.route('/guilds/<guild_id>/custom-commands', methods=['POST'])
 @require_auth
-def create_custom_command(guild_id, current_user):
+def create_custom_command(guild_id):
     """
     Create a new custom command
 
@@ -136,7 +136,7 @@ def create_custom_command(guild_id, current_user):
     """
     try:
         # Check if user is admin
-        is_admin = check_admin_sync(guild_id, current_user['id'])
+        is_admin = check_admin_sync(request.user_id, guild_id)
         if not is_admin:
             return jsonify({
                 "success": False,
@@ -233,7 +233,7 @@ def create_custom_command(guild_id, current_user):
             command_id = dao.create_command(
                 guild_id=str(guild_id),
                 command=command,
-                created_by=str(current_user['id']),
+                created_by=str(request.user_id),
                 prefix=prefix,
                 response_type=response_type,
                 response_text=response_text,
@@ -266,7 +266,7 @@ def create_custom_command(guild_id, current_user):
 
 @custom_commands_bp.route('/guilds/<guild_id>/custom-commands/<int:command_id>', methods=['GET'])
 @require_auth
-def get_custom_command(guild_id, command_id, current_user):
+def get_custom_command(guild_id, command_id):
     """
     Get a specific custom command
 
@@ -278,7 +278,7 @@ def get_custom_command(guild_id, command_id, current_user):
     """
     try:
         # Check if user is admin
-        is_admin = check_admin_sync(guild_id, current_user['id'])
+        is_admin = check_admin_sync(request.user_id, guild_id)
         if not is_admin:
             return jsonify({
                 "success": False,
@@ -310,7 +310,7 @@ def get_custom_command(guild_id, command_id, current_user):
 
 @custom_commands_bp.route('/guilds/<guild_id>/custom-commands/<int:command_id>', methods=['PUT'])
 @require_auth
-def update_custom_command(guild_id, command_id, current_user):
+def update_custom_command(guild_id, command_id):
     """
     Update a custom command
 
@@ -331,7 +331,7 @@ def update_custom_command(guild_id, command_id, current_user):
     """
     try:
         # Check if user is admin
-        is_admin = check_admin_sync(guild_id, current_user['id'])
+        is_admin = check_admin_sync(request.user_id, guild_id)
         if not is_admin:
             return jsonify({
                 "success": False,
@@ -427,7 +427,7 @@ def update_custom_command(guild_id, command_id, current_user):
 
 @custom_commands_bp.route('/guilds/<guild_id>/custom-commands/<int:command_id>', methods=['DELETE'])
 @require_auth
-def delete_custom_command(guild_id, command_id, current_user):
+def delete_custom_command(guild_id, command_id):
     """
     Delete a custom command
 
@@ -439,7 +439,7 @@ def delete_custom_command(guild_id, command_id, current_user):
     """
     try:
         # Check if user is admin
-        is_admin = check_admin_sync(guild_id, current_user['id'])
+        is_admin = check_admin_sync(request.user_id, guild_id)
         if not is_admin:
             return jsonify({
                 "success": False,
@@ -481,7 +481,7 @@ def delete_custom_command(guild_id, command_id, current_user):
 
 @custom_commands_bp.route('/guilds/<guild_id>/custom-commands/<int:command_id>/toggle', methods=['POST'])
 @require_auth
-def toggle_custom_command(guild_id, command_id, current_user):
+def toggle_custom_command(guild_id, command_id):
     """
     Enable or disable a custom command
 
@@ -493,7 +493,7 @@ def toggle_custom_command(guild_id, command_id, current_user):
     """
     try:
         # Check if user is admin
-        is_admin = check_admin_sync(guild_id, current_user['id'])
+        is_admin = check_admin_sync(request.user_id, guild_id)
         if not is_admin:
             return jsonify({
                 "success": False,
@@ -541,7 +541,7 @@ def toggle_custom_command(guild_id, command_id, current_user):
 
 @custom_commands_bp.route('/guilds/<guild_id>/custom-commands/stats', methods=['GET'])
 @require_auth
-def get_custom_commands_stats(guild_id, current_user):
+def get_custom_commands_stats(guild_id):
     """
     Get usage statistics for custom commands
 
@@ -555,7 +555,7 @@ def get_custom_commands_stats(guild_id, current_user):
     """
     try:
         # Check if user is admin
-        is_admin = check_admin_sync(guild_id, current_user['id'])
+        is_admin = check_admin_sync(request.user_id, guild_id)
         if not is_admin:
             return jsonify({
                 "success": False,
