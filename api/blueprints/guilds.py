@@ -8,6 +8,7 @@ from api.services.discord_integration import check_admin_sync, get_channels_sync
 import json
 from datetime import datetime
 import logging
+import asyncio
 
 # Ensure bot path is in sys.path for models import
 current_dir = Path(__file__).parent.parent.parent
@@ -42,91 +43,124 @@ def get_settings_manager():
 @guilds_bp.route('/user/guilds', methods=['GET'])
 @require_auth
 def get_user_guilds():
-    """Get guilds from database with actual Discord permissions"""
-    try:
-        with GuildDao() as guild_dao:
-            # Get guilds where user is a member
-            user_guilds = []
+    """Get guilds from database with actual Discord permissions - OPTIMIZED"""
 
+    async def get_guilds_async():
+        """Async function to process guilds in parallel"""
+        with GuildDao() as guild_dao:
             # Query database for guilds this user is in
             sql = """
                   SELECT DISTINCT g.id, g.name, g.owner_id
                   FROM Guilds g
                            JOIN GuildUsers gu ON g.id = gu.guild_id
-                  WHERE gu.user_id = %s \
-                    AND gu.is_active = TRUE \
+                  WHERE gu.user_id = %s
+                    AND gu.is_active = TRUE
                   """
-
             results = guild_dao.execute_query(sql, (int(request.user_id),))
 
-        if results:
-            for row in results:
-                guild_id, guild_name, owner_id = row
+            if not results:
+                return []  # Return empty list, not jsonify response
 
-                # Get real-time member count from GuildUsers table
-                member_count = guild_dao.get_active_member_count(guild_id)
+            # OPTIMIZATION 1: Batch database query for member counts
+            guild_ids = [row[0] for row in results]
+            member_counts = {}
 
-                # Get fresh owner info from Discord API to handle ownership transfers
-                guild_icon = None
-                guild_banner = None
+            if guild_ids:
+                # Build IN clause with proper parameter placeholders
+                placeholders = ','.join(['%s'] * len(guild_ids))
+                member_count_sql = f"""
+                    SELECT guild_id, COUNT(*) as count
+                    FROM GuildUsers
+                    WHERE guild_id IN ({placeholders}) AND is_active = TRUE
+                    GROUP BY guild_id
+                """
+                counts_result = guild_dao.execute_query(member_count_sql, tuple(guild_ids))
+                # Results are tuples: (guild_id, count)
+                member_counts = {row[0]: row[1] for row in counts_result}
+
+        # OPTIMIZATION 2: Process all guilds in parallel
+        async def process_guild(guild_id, guild_name, owner_id):
+            """Process a single guild - fetch Discord data and check permissions"""
+            try:
+                # OPTIMIZATION 3: Fetch guild info first, then pass to check_admin to avoid duplicate call
+                guild_info = None
+                has_admin = False
+
                 try:
-                    guild_info = run_sync(http_client.get_guild_info(str(guild_id)))
-                    fresh_owner_id = guild_info.get('owner_id') if guild_info else None
-                    is_owner = str(fresh_owner_id) == request.user_id if fresh_owner_id else False
-
-                    # Extract icon and banner from Discord API
-                    guild_icon = guild_info.get('icon') if guild_info else None
-                    guild_banner = guild_info.get('banner') if guild_info else None
-
-                    # Update database if owner changed
-                    if fresh_owner_id and str(fresh_owner_id) != str(owner_id):
-                        logger.info(f"Owner changed for guild {guild_id}: {owner_id} -> {fresh_owner_id}, updating database")
-                        guild_record = guild_dao.get_guild(guild_id)
-                        if guild_record:
-                            guild_record.owner_id = int(fresh_owner_id)
-                            guild_dao.update_guild(guild_record)
+                    guild_info = await http_client.get_guild_info(str(guild_id))
                 except Exception as e:
-                    logger.error(f"Failed to get fresh owner for guild {guild_id}: {e}")
-                    # Fallback to database owner_id if Discord API fails
-                    is_owner = str(owner_id) == request.user_id
+                    logger.error(f"Failed to get guild info for {guild_id}: {e}")
 
-                logger.info(f"Processing guild {guild_id} ({guild_name}): is_owner={is_owner}, user={request.user_id}, owner={owner_id})")
+                try:
+                    # Check admin permissions (reuses guild_info to avoid duplicate API call)
+                    has_admin = await http_client.check_admin(request.user_id, str(guild_id), guild_info)
+                except Exception as e:
+                    logger.error(f"Failed to check admin for guild {guild_id}: {e}")
 
-                # Check actual Discord permissions for non-owners
-                permissions = []
-                if is_owner:
-                    permissions = ["administrator"]
-                    logger.info(f"  -> User is owner, granting administrator permissions")
-                else:
-                    # Check if user has admin/manage server permission via Discord API
-                    logger.info(f"  -> User is NOT owner, checking Discord API permissions...")
+                # Determine ownership
+                fresh_owner_id = guild_info.get('owner_id') if guild_info else None
+                is_owner = str(fresh_owner_id) == request.user_id if fresh_owner_id else (str(owner_id) == request.user_id)
+
+                # Extract guild data
+                guild_icon = guild_info.get('icon') if guild_info else None
+                guild_banner = guild_info.get('banner') if guild_info else None
+                guild_name_fresh = guild_info.get('name') if guild_info else guild_name
+
+                # Update database if owner changed
+                if fresh_owner_id and str(fresh_owner_id) != str(owner_id):
+                    logger.info(f"Owner changed for guild {guild_id}: {owner_id} -> {fresh_owner_id}, updating database")
                     try:
-                        has_admin = check_admin_sync(request.user_id, str(guild_id))
-                        logger.info(f"  -> Discord API returned has_admin={has_admin}")
-                        if has_admin:
-                            permissions = ["administrator"]
-                            logger.info(f"  -> Granting administrator permissions")
-                        else:
-                            permissions = ["member"]
-                            logger.info(f"  -> Granting member permissions only")
+                        with GuildDao() as guild_dao:
+                            guild_record = guild_dao.get_guild(guild_id)
+                            if guild_record:
+                                guild_record.owner_id = int(fresh_owner_id)
+                                guild_dao.update_guild(guild_record)
                     except Exception as e:
-                        logger.error(f"  -> Error checking permissions for guild {guild_id}: {e}")
-                        import traceback
-                        traceback.print_exc()
-                        permissions = ["member"]  # Default to member if check fails
-                        logger.info(f"  -> Falling back to member permissions due to error")
+                        logger.error(f"Failed to update owner for guild {guild_id}: {e}")
 
-                user_guilds.append({
+                # Determine permissions
+                if is_owner or has_admin:
+                    permissions = ["administrator"]
+                else:
+                    permissions = ["member"]
+
+                logger.info(f"Processed guild {guild_id} ({guild_name_fresh}): owner={is_owner}, admin={has_admin}")
+
+                return {
                     "id": str(guild_id),
-                    "name": guild_name,
-                    "member_count": member_count,
+                    "name": guild_name_fresh,
+                    "member_count": member_counts.get(guild_id, 0),
                     "owner": is_owner,
                     "permissions": permissions,
                     "icon": guild_icon,
                     "banner": guild_banner
-                })
+                }
+
+            except Exception as e:
+                logger.error(f"Error processing guild {guild_id}: {e}")
+                import traceback
+                traceback.print_exc()
+                # Return basic guild info on error
+                return {
+                    "id": str(guild_id),
+                    "name": guild_name,
+                    "member_count": member_counts.get(guild_id, 0),
+                    "owner": str(owner_id) == request.user_id,
+                    "permissions": ["member"],
+                    "icon": None,
+                    "banner": None
+                }
+
+        # Process all guilds in parallel
+        tasks = [process_guild(row[0], row[1], row[2]) for row in results]
+        user_guilds = await asyncio.gather(*tasks)
 
         logger.info(f"Found {len(user_guilds)} guilds for user {request.user_id}")
+        return user_guilds
+
+    # Execute async function synchronously
+    try:
+        user_guilds = asyncio.run(get_guilds_async())
         return jsonify({
             "success": True,
             "guilds": user_guilds

@@ -76,7 +76,7 @@ class StripeService:
                 'checkout_url': session.url
             }
 
-        except stripe.error.StripeError as e:
+        except stripe._error.StripeError as e:
             logger.error(f"Stripe error creating checkout session: {e}")
             return None
         except Exception as e:
@@ -113,7 +113,7 @@ class StripeService:
             logger.info(f"Created Stripe customer for guild {guild_id}: {customer.id}")
             return customer.id
 
-        except stripe.error.StripeError as e:
+        except stripe._error.StripeError as e:
             logger.error(f"Stripe error creating customer: {e}")
             return None
         except Exception as e:
@@ -133,16 +133,26 @@ class StripeService:
         try:
             subscription = stripe.Subscription.retrieve(subscription_id)
 
+            # Get period dates from the subscription items
+            current_period_start = subscription.get('billing_cycle_anchor') or subscription.get('created')
+            current_period_end = current_period_start
+
+            # Try to get from items if available
+            if subscription.get('items') and subscription['items'].get('data'):
+                item = subscription['items']['data'][0]
+                current_period_start = item.get('current_period_start', current_period_start)
+                current_period_end = item.get('current_period_end', current_period_end)
+
             return {
                 'id': subscription.id,
                 'status': subscription.status,
-                'current_period_start': subscription.current_period_start,
-                'current_period_end': subscription.current_period_end,
-                'cancel_at_period_end': subscription.cancel_at_period_end,
+                'current_period_start': current_period_start,
+                'current_period_end': current_period_end,
+                'cancel_at_period_end': subscription.get('cancel_at_period_end', False),
                 'customer_id': subscription.customer
             }
 
-        except stripe.error.StripeError as e:
+        except stripe._error.StripeError as e:
             logger.error(f"Stripe error retrieving subscription: {e}")
             return None
         except Exception as e:
@@ -177,7 +187,7 @@ class StripeService:
 
             return True
 
-        except stripe.error.StripeError as e:
+        except stripe._error.StripeError as e:
             logger.error(f"Stripe error canceling subscription: {e}")
             return False
         except Exception as e:
@@ -208,7 +218,7 @@ class StripeService:
             logger.info(f"Created portal session for customer {customer_id}")
             return session.url
 
-        except stripe.error.StripeError as e:
+        except stripe._error.StripeError as e:
             logger.error(f"Stripe error creating portal session: {e}")
             return None
         except Exception as e:
@@ -269,7 +279,7 @@ class StripeService:
                 'next_payment_attempt': invoice.next_payment_attempt
             }
 
-        except stripe.error.StripeError as e:
+        except stripe._error.StripeError as e:
             logger.error(f"Stripe error retrieving upcoming invoice: {e}")
             return None
         except Exception as e:
@@ -290,7 +300,7 @@ class StripeService:
             subscriptions = stripe.Subscription.list(customer=customer_id)
             return subscriptions.data
 
-        except stripe.error.StripeError as e:
+        except stripe._error.StripeError as e:
             logger.error(f"Stripe error listing subscriptions: {e}")
             return []
         except Exception as e:

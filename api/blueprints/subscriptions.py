@@ -39,32 +39,23 @@ def get_subscription(guild_id):
                 "message": "You don't have permission to view this server's subscription"
             }), 403
 
-        # Get subscription from database
-        with SubscriptionDao() as sub_dao:
-            subscription = sub_dao.get_by_guild_id(str(guild_id))
-
-        # Get guild tier from Guilds table
+        # Get guild tier from Guilds table (primary source of truth)
         with GuildDao() as guild_dao:
             guild = guild_dao.find_by_id(int(guild_id))
             tier = guild.subscription_tier if guild else 'free'
             status = guild.subscription_status if guild else 'active'
 
-        if subscription:
-            return jsonify({
-                "success": True,
-                "subscription": subscription.to_dict(),
-                "tier": tier,
-                "status": status
-            })
-        else:
-            # No subscription record = free tier
-            return jsonify({
-                "success": True,
-                "subscription": None,
-                "tier": "free",
-                "status": "active",
-                "message": "No active subscription"
-            })
+        # Get subscription from Subscriptions table (Stripe billing info)
+        with SubscriptionDao() as sub_dao:
+            subscription = sub_dao.get_by_guild_id(str(guild_id))
+
+        # Always return the tier from Guilds table
+        return jsonify({
+            "success": True,
+            "subscription": subscription.to_dict() if subscription else None,
+            "tier": tier,
+            "status": status
+        })
 
     except Exception as e:
         logger.error(f"Error getting subscription for guild {guild_id}: {e}")
@@ -246,10 +237,12 @@ def customer_portal():
         with SubscriptionDao() as sub_dao:
             subscription = sub_dao.get_by_guild_id(str(guild_id))
 
+        # If no Stripe subscription exists, redirect to premium page to start subscription
         if not subscription or not subscription.stripe_customer_id:
             return jsonify({
                 "success": False,
-                "message": "No subscription found"
+                "message": "No active Stripe subscription. Please upgrade through the Premium page.",
+                "redirect_to_premium": True
             }), 404
 
         return_url = data.get('return_url', f'https://acosmibot.com/guild-dashboard?guild={guild_id}')
@@ -273,6 +266,62 @@ def customer_portal():
 
     except Exception as e:
         logger.error(f"Error creating portal session: {e}")
+        return jsonify({
+            "success": False,
+            "message": "Internal server error",
+            "error": str(e)
+        }), 500
+
+
+@subscriptions_bp.route('/subscriptions/test-upgrade', methods=['POST'])
+@require_auth
+def test_upgrade_guild():
+    """TEST ONLY: Manually upgrade a guild to premium for testing"""
+    try:
+        # Disable in production - only allow when using test Stripe keys
+        stripe_key = os.getenv('STRIPE_SECRET_KEY', '')
+        if stripe_key.startswith('sk_live_'):
+            return jsonify({
+                "success": False,
+                "message": "Test endpoint disabled when using live Stripe keys"
+            }), 403
+
+        data = request.get_json()
+        if not data or 'guild_id' not in data:
+            return jsonify({
+                "success": False,
+                "message": "guild_id is required"
+            }), 400
+
+        guild_id = data['guild_id']
+
+        # Check permissions
+        has_admin = check_admin_sync(request.user_id, guild_id)
+        if not has_admin:
+            return jsonify({
+                "success": False,
+                "message": "You don't have permission to manage this server's subscription"
+            }), 403
+
+        # Update Guilds table to set premium tier
+        with GuildDao() as guild_dao:
+            guild_dao.execute_query(
+                "UPDATE Guilds SET subscription_tier = 'premium', subscription_status = 'active' WHERE id = %s",
+                (int(guild_id),),
+                commit=True
+            )
+
+        logger.info(f"Test upgrade: Guild {guild_id} upgraded to premium by user {request.user_id}")
+
+        return jsonify({
+            "success": True,
+            "message": "Guild upgraded to premium (test mode)"
+        })
+
+    except Exception as e:
+        logger.error(f"Error in test upgrade for guild {guild_id}: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({
             "success": False,
             "message": "Internal server error",
@@ -334,6 +383,7 @@ def stripe_webhook():
     except Exception as e:
         logger.error(f"Error handling webhook {event_type}: {e}")
         import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
@@ -376,7 +426,7 @@ def handle_checkout_completed(session):
         guild_dao.execute_query(
             "UPDATE Guilds SET subscription_tier = 'premium', subscription_status = 'active' WHERE id = %s",
             (int(guild_id),),
-            fetch=False
+            commit=True
         )
 
     logger.info(f"Subscription created for guild {guild_id}")
@@ -389,14 +439,31 @@ def handle_subscription_updated(subscription):
     subscription_id = subscription['id']
     status = subscription['status']
 
+    # Get period dates from subscription items
+    current_period_start = subscription.get('billing_cycle_anchor') or subscription.get('created')
+    current_period_end = current_period_start
+
+    if subscription.get('items') and subscription['items'].get('data'):
+        item = subscription['items']['data'][0]
+        current_period_start = item.get('current_period_start', current_period_start)
+        current_period_end = item.get('current_period_end', current_period_end)
+
+    # Get cancel_at_period_end value
+    # Stripe now uses 'cancel_at' timestamp instead of cancel_at_period_end boolean
+    cancel_at = subscription.get('cancel_at')
+    cancel_at_period_end = subscription.get('cancel_at_period_end', False) or (cancel_at is not None)
+
+    logger.info(f"Updating subscription {subscription_id}: status={status}, cancel_at={cancel_at}, cancel_at_period_end={cancel_at_period_end}")
+
     # Update subscription in database
     with SubscriptionDao() as sub_dao:
         sub_dao.update_by_stripe_subscription_id(
             stripe_subscription_id=subscription_id,
             status=status,
-            current_period_start=datetime.fromtimestamp(subscription['current_period_start']),
-            current_period_end=datetime.fromtimestamp(subscription['current_period_end']),
-            cancel_at_period_end=subscription.get('cancel_at_period_end', False)
+            current_period_start=datetime.fromtimestamp(current_period_start),
+            current_period_end=datetime.fromtimestamp(current_period_end),
+            cancel_at_period_end=cancel_at_period_end,
+            cancel_at=datetime.fromtimestamp(cancel_at) if cancel_at else None
         )
 
         # Get guild_id
@@ -408,7 +475,7 @@ def handle_subscription_updated(subscription):
             guild_dao.execute_query(
                 "UPDATE Guilds SET subscription_status = %s WHERE id = %s",
                 (status, int(subscription_record.guild_id)),
-                fetch=False
+                commit=True
             )
 
     logger.info(f"Subscription {subscription_id} updated to status: {status}")
@@ -436,7 +503,7 @@ def handle_subscription_deleted(subscription):
                 guild_dao.execute_query(
                     "UPDATE Guilds SET subscription_tier = 'free', subscription_status = 'canceled' WHERE id = %s",
                     (int(subscription_record.guild_id),),
-                    fetch=False
+                    commit=True
                 )
 
             logger.info(f"Guild {subscription_record.guild_id} downgraded to free tier")
@@ -466,7 +533,7 @@ def handle_payment_failed(invoice):
                 guild_dao.execute_query(
                     "UPDATE Guilds SET subscription_status = 'past_due' WHERE id = %s",
                     (int(subscription_record.guild_id),),
-                    fetch=False
+                    commit=True
                 )
 
     logger.info(f"Subscription {subscription_id} marked as past_due")
@@ -496,7 +563,7 @@ def handle_payment_succeeded(invoice):
                 guild_dao.execute_query(
                     "UPDATE Guilds SET subscription_tier = 'premium', subscription_status = 'active' WHERE id = %s",
                     (int(subscription_record.guild_id),),
-                    fetch=False
+                    commit=True
                 )
 
     logger.info(f"Subscription {subscription_id} marked as active")

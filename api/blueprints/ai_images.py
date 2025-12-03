@@ -45,6 +45,7 @@ def get_image_stats(guild_id):
         # Get tier limits
         tier = PremiumChecker.get_guild_tier(int(guild_id))
         monthly_limit = PremiumChecker.get_image_monthly_limit(int(guild_id))
+        analysis_monthly_limit = PremiumChecker.get_limit(int(guild_id), 'image_analysis_monthly_limit')
         can_generate = PremiumChecker.has_feature(int(guild_id), 'image_generation')
         can_analyze = PremiumChecker.has_feature(int(guild_id), 'image_analysis')
 
@@ -54,6 +55,7 @@ def get_image_stats(guild_id):
             "limits": {
                 "tier": tier,
                 "monthly_image_limit": monthly_limit,
+                "image_analysis_monthly_limit": analysis_monthly_limit,
                 "can_generate": can_generate,
                 "can_analyze": can_analyze
             }

@@ -108,11 +108,21 @@ class SimpleDiscordHTTPClient:
                 print(f"Error listing guilds: {e}")
                 return []
 
-    async def check_admin(self, user_id: str, guild_id: str):
-        """Check if user has admin permissions"""
+    async def check_admin(self, user_id: str, guild_id: str, guild_info: dict = None):
+        """Check if user has admin permissions
+
+        Args:
+            user_id: Discord user ID
+            guild_id: Discord guild ID
+            guild_info: Optional cached guild info to avoid duplicate API call
+        """
         try:
-            # Get guild info
-            guild = await self.get_guild_info(guild_id)
+            # Get guild info (use cached if provided)
+            if guild_info is None:
+                guild = await self.get_guild_info(guild_id)
+            else:
+                guild = guild_info
+
             if not guild:
                 logger.warning(f"[check_admin] Guild {guild_id} not found or bot not in guild")
                 return False
