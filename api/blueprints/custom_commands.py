@@ -382,12 +382,13 @@ def update_custom_command(guild_id, command_id):
 
         if 'embed_config' in data:
             embed_config = data['embed_config']
-            is_valid_embed, error_msg = validate_embed_config(embed_config)
-            if not is_valid_embed:
-                return jsonify({
-                    "success": False,
-                    "message": f"Invalid embed configuration: {error_msg}"
-                }), 400
+            if embed_config is not None:
+                is_valid_embed, error_msg = validate_embed_config(embed_config)
+                if not is_valid_embed:
+                    return jsonify({
+                        "success": False,
+                        "message": f"Invalid embed configuration: {error_msg}"
+                    }), 400
             update_fields['embed_config'] = embed_config
 
         if 'is_enabled' in data:
