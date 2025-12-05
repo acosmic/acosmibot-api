@@ -8,6 +8,7 @@ from .users import users_bp
 from .portal import portal_bp
 from .admin import admin_bp
 from .twitch import twitch_bp
+from .youtube import youtube_bp
 from .reaction_roles import reaction_roles_bp
 from .subscriptions import subscriptions_bp
 from .custom_commands import custom_commands_bp
@@ -22,6 +23,7 @@ __all__ = [
     'portal_bp',
     'admin_bp',
     'twitch_bp',
+    'youtube_bp',
     'reaction_roles_bp',
     'subscriptions_bp',
     'custom_commands_bp',

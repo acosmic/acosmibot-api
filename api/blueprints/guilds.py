@@ -521,8 +521,8 @@ def update_guild_config_hybrid(guild_id):
 
         settings = data['settings']
 
-        # Validate settings structure
-        required_sections = ['leveling', 'roles', 'ai', 'games', 'cross_server_portal', 'twitch', 'reaction_roles']
+        # Validate settings structure (updated to support both streaming and legacy twitch)
+        required_sections = ['leveling', 'roles', 'ai', 'games', 'cross_server_portal', 'reaction_roles']
         for section in required_sections:
             if section not in settings:
                 return jsonify({
@@ -530,25 +530,66 @@ def update_guild_config_hybrid(guild_id):
                     "message": f"Missing required settings section: {section}"
                 }), 400
 
-        # Validate Twitch settings if present
-        if 'twitch' in settings and settings['twitch'].get('enabled'):
-            # Validate tracked_streamers limit based on tier
-            tracked_streamers = settings['twitch'].get('tracked_streamers', [])
-            can_add, error_msg = PremiumChecker.check_twitch_limit(int(guild_id), len(tracked_streamers))
+        # Validate unified streaming settings (supports both Twitch and YouTube)
+        if 'streaming' in settings and settings['streaming'].get('enabled'):
+            tracked_streamers = settings['streaming'].get('tracked_streamers', [])
+
+            # Count streamers by platform
+            twitch_count = sum(1 for s in tracked_streamers if s.get('platform') == 'twitch')
+            youtube_count = sum(1 for s in tracked_streamers if s.get('platform') == 'youtube')
+
+            # Validate Twitch limit (separate quota)
+            can_add_twitch, error_msg = PremiumChecker.check_streaming_limit(int(guild_id), 'twitch', twitch_count)
+            if not can_add_twitch:
+                return jsonify({
+                    "success": False,
+                    "message": error_msg
+                }), 403
+
+            # Validate YouTube limit (separate quota)
+            can_add_youtube, error_msg = PremiumChecker.check_streaming_limit(int(guild_id), 'youtube', youtube_count)
+            if not can_add_youtube:
+                return jsonify({
+                    "success": False,
+                    "message": error_msg
+                }), 403
+
+            # Validate each streamer has required fields
+            for streamer in tracked_streamers:
+                if 'platform' not in streamer or not streamer['platform']:
+                    return jsonify({
+                        "success": False,
+                        "message": "Each streamer must have a platform field"
+                    }), 400
+
+                if streamer['platform'] not in ['twitch', 'youtube']:
+                    return jsonify({
+                        "success": False,
+                        "message": f"Invalid platform: {streamer['platform']}. Must be 'twitch' or 'youtube'"
+                    }), 400
+
+                if 'username' not in streamer or not streamer['username']:
+                    return jsonify({
+                        "success": False,
+                        "message": "Each streamer must have a username"
+                    }), 400
+
+        # Validate legacy Twitch settings if present (backward compatibility)
+        elif 'twitch' in settings and settings['twitch'].get('enabled'):
+            # Auto-migrate to streaming format on save
+            from acosmibot.utils.settings_migrator import migrate_twitch_to_streaming
+            settings = migrate_twitch_to_streaming(settings)
+
+            # Validate after migration
+            tracked_streamers = settings['streaming'].get('tracked_streamers', [])
+            twitch_count = len(tracked_streamers)
+            can_add, error_msg = PremiumChecker.check_streaming_limit(int(guild_id), 'twitch', twitch_count)
 
             if not can_add:
                 return jsonify({
                     "success": False,
                     "message": error_msg
-                }), 400
-
-            # Validate each streamer has required fields
-            for streamer in tracked_streamers:
-                if 'twitch_username' not in streamer or not streamer['twitch_username']:
-                    return jsonify({
-                        "success": False,
-                        "message": "Each streamer must have a twitch_username"
-                    }), 400
+                }), 403
 
         # Validate leveling settings
         leveling_required_fields = {
@@ -580,8 +621,9 @@ def update_guild_config_hybrid(guild_id):
         if 'games' in settings and 'slots-config' in settings['games']:
             slots_config = settings['games']['slots-config']
 
-            # Only validate required guild-specific fields: enabled and symbols
-            # All other fields (multipliers, bets) are pulled from global defaults in Slots.py
+            # Only validate guild-specific fields: enabled and symbols
+            # Multipliers, min_bet, max_bet, and bet_options are hardcoded in bot for fairness
+            # (cannot be customized per guild to ensure fair leaderboard competition)
 
             # Validate 'enabled' field
             if 'enabled' not in slots_config:
@@ -610,73 +652,13 @@ def update_guild_config_hybrid(guild_id):
                         "message": "games.slots-config.symbols must contain exactly 12 emojis"
                     }), 400
 
-            # Optional: Validate other fields IF they are provided (for future use by dev admins)
-            if 'match_two_multiplier' in slots_config:
-                if not isinstance(slots_config['match_two_multiplier'], int):
-                    return jsonify({
-                        "success": False,
-                        "message": "Invalid type for games.slots-config.match_two_multiplier, expected int"
-                    }), 400
-                if slots_config['match_two_multiplier'] < 1 or slots_config['match_two_multiplier'] > 10:
-                    return jsonify({
-                        "success": False,
-                        "message": "games.slots-config.match_two_multiplier must be between 1 and 10"
-                    }), 400
-
-            if 'match_three_multiplier' in slots_config:
-                if not isinstance(slots_config['match_three_multiplier'], int):
-                    return jsonify({
-                        "success": False,
-                        "message": "Invalid type for games.slots-config.match_three_multiplier, expected int"
-                    }), 400
-                if slots_config['match_three_multiplier'] < 1 or slots_config['match_three_multiplier'] > 100:
-                    return jsonify({
-                        "success": False,
-                        "message": "games.slots-config.match_three_multiplier must be between 1 and 100"
-                    }), 400
-
-            if 'min_bet' in slots_config:
-                if not isinstance(slots_config['min_bet'], int):
-                    return jsonify({
-                        "success": False,
-                        "message": "Invalid type for games.slots-config.min_bet, expected int"
-                    }), 400
-                if slots_config['min_bet'] < 1 or slots_config['min_bet'] > 10000:
-                    return jsonify({
-                        "success": False,
-                        "message": "games.slots-config.min_bet must be between 1 and 10000"
-                    }), 400
-
-            if 'max_bet' in slots_config:
-                if not isinstance(slots_config['max_bet'], int):
-                    return jsonify({
-                        "success": False,
-                        "message": "Invalid type for games.slots-config.max_bet, expected int"
-                    }), 400
-                min_bet = slots_config.get('min_bet', 1)
-                if slots_config['max_bet'] < min_bet or slots_config['max_bet'] > 1000000:
-                    return jsonify({
-                        "success": False,
-                        "message": "games.slots-config.max_bet must be between min_bet and 1000000"
-                    }), 400
-
-            if 'bet_options' in slots_config:
-                if not isinstance(slots_config['bet_options'], list):
-                    return jsonify({
-                        "success": False,
-                        "message": "Invalid type for games.slots-config.bet_options, expected list"
-                    }), 400
-                if not slots_config['bet_options'] or len(slots_config['bet_options']) == 0:
-                    return jsonify({
-                        "success": False,
-                        "message": "games.slots-config.bet_options cannot be empty"
-                    }), 400
-                for bet_option in slots_config['bet_options']:
-                    if not isinstance(bet_option, int) or bet_option < 1:
-                        return jsonify({
-                            "success": False,
-                            "message": "All bet_options must be positive integers"
-                        }), 400
+            # Remove any bet-related fields from the config before saving
+            # These are hardcoded in the bot and should not be stored in DB
+            slots_config.pop('match_two_multiplier', None)
+            slots_config.pop('match_three_multiplier', None)
+            slots_config.pop('min_bet', None)
+            slots_config.pop('max_bet', None)
+            slots_config.pop('bet_options', None)
 
         # Validate cross-server portal settings
         if 'cross_server_portal' in settings:
