@@ -37,7 +37,7 @@ def callback():
     jwt_token = oauth_service.create_jwt(user_info)
 
     # Redirect to user dashboard on main website with token
-    user_dashboard_url = f"https://acosmibot.com/user-dashboard.html?token={jwt_token}"
+    user_dashboard_url = f"https://acosmibot.com/dashboard?token={jwt_token}"
     return redirect(user_dashboard_url)
 
 
