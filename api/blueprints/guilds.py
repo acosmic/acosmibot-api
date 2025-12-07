@@ -410,7 +410,14 @@ def get_guild_config_hybrid(guild_id):
             settings_dict["games"] = {
                 "slots-config": {
                     "enabled": True,
-                    "symbols": ["🍒", "🍋", "🍊", "🍇", "🍎", "🍌", "⭐", "🔔", "💎", "🎰", "🍀", "❤️"],
+                    "tier_emojis": {
+                        "common": ["🍒", "🍋", "🍊", "🍇", "🍌"],
+                        "uncommon": ["⭐", "🔔", "❤️"],
+                        "rare": ["🍀"],
+                        "legendary": ["💎", "🎰"],
+                        "scatter": ["⚡"]
+                    },
+                    "symbols": ["🍒", "🍋", "🍊", "🍇", "🍎", "🍌", "⭐", "🔔", "💎", "🎰", "🍀", "❤️"],  # Legacy - deprecated
                     "match_two_multiplier": 2,
                     "match_three_multiplier": 10,
                     "min_bet": 100,
@@ -421,7 +428,14 @@ def get_guild_config_hybrid(guild_id):
         elif "slots-config" not in settings_dict["games"]:
             settings_dict["games"]["slots-config"] = {
                 "enabled": True,
-                "symbols": ["🍒", "🍋", "🍊", "🍇", "🍎", "🍌", "⭐", "🔔", "💎", "🎰", "🍀", "❤️"],
+                "tier_emojis": {
+                    "common": ["🍒", "🍋", "🍊", "🍇", "🍌"],
+                    "uncommon": ["⭐", "🔔", "❤️"],
+                    "rare": ["🍀"],
+                    "legendary": ["💎", "🎰"],
+                    "scatter": ["⚡"]
+                },
+                "symbols": ["🍒", "🍋", "🍊", "🍇", "🍎", "🍌", "⭐", "🔔", "💎", "🎰", "🍀", "❤️"],  # Legacy - deprecated
                 "match_two_multiplier": 2,
                 "match_three_multiplier": 10,
                 "min_bet": 100,
@@ -638,7 +652,7 @@ def update_guild_config_hybrid(guild_id):
                     "message": "Invalid type for games.slots-config.enabled, expected bool"
                 }), 400
 
-            # Validate 'symbols' field if provided
+            # Validate 'symbols' field if provided (legacy)
             if 'symbols' in slots_config:
                 if not isinstance(slots_config['symbols'], list):
                     return jsonify({
@@ -651,6 +665,50 @@ def update_guild_config_hybrid(guild_id):
                         "success": False,
                         "message": "games.slots-config.symbols must contain exactly 12 emojis"
                     }), 400
+
+            # Validate 'tier_emojis' structure if provided
+            if 'tier_emojis' in slots_config:
+                tier_emojis = slots_config['tier_emojis']
+
+                if not isinstance(tier_emojis, dict):
+                    return jsonify({
+                        "success": False,
+                        "message": "Invalid type for tier_emojis, expected dict"
+                    }), 400
+
+                # Define expected structure with limits
+                tier_limits = {
+                    'common': 5,
+                    'uncommon': 3,
+                    'rare': 1,
+                    'legendary': 2,
+                    'scatter': 1
+                }
+
+                # Validate each tier
+                for tier, limit in tier_limits.items():
+                    if tier in tier_emojis:
+                        tier_list = tier_emojis[tier]
+
+                        if not isinstance(tier_list, list):
+                            return jsonify({
+                                "success": False,
+                                "message": f"tier_emojis.{tier} must be a list"
+                            }), 400
+
+                        if len(tier_list) > limit:
+                            return jsonify({
+                                "success": False,
+                                "message": f"tier_emojis.{tier} exceeds limit of {limit}"
+                            }), 400
+
+                        # Validate each emoji is a string
+                        for emoji in tier_list:
+                            if not isinstance(emoji, str):
+                                return jsonify({
+                                    "success": False,
+                                    "message": f"All emojis in tier_emojis.{tier} must be strings"
+                                }), 400
 
             # Remove any bet-related fields from the config before saving
             # These are hardcoded in the bot and should not be stored in DB
