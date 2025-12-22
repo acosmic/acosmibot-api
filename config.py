@@ -15,6 +15,10 @@ class Config:
     DISCORD_CLIENT_SECRET = os.getenv('DISCORD_CLIENT_SECRET')
     REDIRECT_URI = os.getenv('REDIRECT_URI')
 
+    # YouTube Webhook Configuration
+    YOUTUBE_WEBHOOK_CALLBACK_URL = os.getenv('YOUTUBE_WEBHOOK_CALLBACK_URL')
+    YOUTUBE_WEBHOOK_SECRET = os.getenv('YOUTUBE_WEBHOOK_SECRET')
+
 
 class DevelopmentConfig(Config):
     """Development configuration"""

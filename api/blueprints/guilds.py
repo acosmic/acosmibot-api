@@ -1,949 +1,250 @@
 """Guild management endpoints - config, permissions, stats"""
 import sys
 from pathlib import Path
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, current_app
 from api.middleware.auth_decorators import require_auth
 from api.services.dao_imports import GuildDao, GuildUserDao, ReactionRoleDao
-from api.services.discord_integration import check_admin_sync, get_channels_sync, http_client, run_sync
+from api.services.discord_integration import check_admin_sync, get_channels_sync, http_client
+from api.services.twitch_subscription_manager import TwitchSubscriptionManager
+from api.services.youtube_subscription_manager import YouTubeSubscriptionManager
+from acosmibot.Services.youtube_service import YouTubeService
+import aiohttp
 import json
 from datetime import datetime
 import logging
 import asyncio
 
-# Ensure bot path is in sys.path for models import
-current_dir = Path(__file__).parent.parent.parent
-bot_project_path = current_dir.parent / "acosmibot"
-if str(bot_project_path) not in sys.path:
-    sys.path.insert(0, str(bot_project_path))
-
-from models.settings_manager import SettingsManager
-from utils.premium_checker import PremiumChecker
+from acosmibot.models.settings_manager import SettingsManager
+from acosmibot.utils.premium_checker import PremiumChecker
+from api import run_async_threadsafe
 
 logger = logging.getLogger(__name__)
 guilds_bp = Blueprint('guilds', __name__, url_prefix='/api')
 
-
 def get_settings_manager():
     """
     Get settings manager singleton instance.
-
-    Initializes the singleton on first call, then returns the same instance.
-    This is safe to call multiple times.
     """
     try:
-        # Try to get existing singleton instance
         return SettingsManager.get_instance()
     except ValueError:
-        # Not yet initialized, initialize it now
         with GuildDao() as guild_dao:
-            settings_manager = SettingsManager(guild_dao)
-            return settings_manager
-
+            return SettingsManager(guild_dao)
 
 @guilds_bp.route('/user/guilds', methods=['GET'])
 @require_auth
 def get_user_guilds():
     """Get guilds from database with actual Discord permissions - OPTIMIZED"""
+    def get_guilds_sync():
+        async def get_guilds_async():
+            # This is a complex async function that needs to run in the background thread
+            # It fetches data from DB and then makes parallel Discord API calls.
+            with GuildDao() as guild_dao:
+                sql = "SELECT DISTINCT g.id, g.name, g.owner_id FROM Guilds g JOIN GuildUsers gu ON g.id = gu.guild_id WHERE gu.user_id = %s AND gu.is_active = TRUE"
+                results = guild_dao.execute_query(sql, (int(request.user_id),))
+                if not results:
+                    return []
 
-    async def get_guilds_async():
-        """Async function to process guilds in parallel"""
-        with GuildDao() as guild_dao:
-            # Query database for guilds this user is in
-            sql = """
-                  SELECT DISTINCT g.id, g.name, g.owner_id
-                  FROM Guilds g
-                           JOIN GuildUsers gu ON g.id = gu.guild_id
-                  WHERE gu.user_id = %s
-                    AND gu.is_active = TRUE
-                  """
-            results = guild_dao.execute_query(sql, (int(request.user_id),))
+                guild_ids = [row[0] for row in results]
+                member_counts = {}
+                if guild_ids:
+                    placeholders = ','.join(['%s'] * len(guild_ids))
+                    member_count_sql = f"SELECT guild_id, COUNT(*) as count FROM GuildUsers WHERE guild_id IN ({placeholders}) AND is_active = TRUE GROUP BY guild_id"
+                    counts_result = guild_dao.execute_query(member_count_sql, tuple(guild_ids))
+                    member_counts = {row[0]: row[1] for row in counts_result}
 
-            if not results:
-                return []  # Return empty list, not jsonify response
-
-            # OPTIMIZATION 1: Batch database query for member counts
-            guild_ids = [row[0] for row in results]
-            member_counts = {}
-
-            if guild_ids:
-                # Build IN clause with proper parameter placeholders
-                placeholders = ','.join(['%s'] * len(guild_ids))
-                member_count_sql = f"""
-                    SELECT guild_id, COUNT(*) as count
-                    FROM GuildUsers
-                    WHERE guild_id IN ({placeholders}) AND is_active = TRUE
-                    GROUP BY guild_id
-                """
-                counts_result = guild_dao.execute_query(member_count_sql, tuple(guild_ids))
-                # Results are tuples: (guild_id, count)
-                member_counts = {row[0]: row[1] for row in counts_result}
-
-        # OPTIMIZATION 2: Process all guilds in parallel
-        async def process_guild(guild_id, guild_name, owner_id):
-            """Process a single guild - fetch Discord data and check permissions"""
-            try:
-                # OPTIMIZATION 3: Fetch guild info first, then pass to check_admin to avoid duplicate call
-                guild_info = None
-                has_admin = False
-
+            async def process_guild(guild_id, guild_name, owner_id):
                 try:
                     guild_info = await http_client.get_guild_info(str(guild_id))
-                except Exception as e:
-                    logger.error(f"Failed to get guild info for {guild_id}: {e}")
-
-                try:
-                    # Check admin permissions (reuses guild_info to avoid duplicate API call)
                     has_admin = await http_client.check_admin(request.user_id, str(guild_id), guild_info)
-                except Exception as e:
-                    logger.error(f"Failed to check admin for guild {guild_id}: {e}")
+                    
+                    fresh_owner_id = guild_info.get('owner_id') if guild_info else None
+                    is_owner = str(fresh_owner_id) == request.user_id if fresh_owner_id else str(owner_id) == request.user_id
 
-                # Determine ownership
-                fresh_owner_id = guild_info.get('owner_id') if guild_info else None
-                is_owner = str(fresh_owner_id) == request.user_id if fresh_owner_id else (str(owner_id) == request.user_id)
-
-                # Extract guild data
-                guild_icon = guild_info.get('icon') if guild_info else None
-                guild_banner = guild_info.get('banner') if guild_info else None
-                guild_name_fresh = guild_info.get('name') if guild_info else guild_name
-
-                # Update database if owner changed
-                if fresh_owner_id and str(fresh_owner_id) != str(owner_id):
-                    logger.info(f"Owner changed for guild {guild_id}: {owner_id} -> {fresh_owner_id}, updating database")
-                    try:
-                        with GuildDao() as guild_dao:
-                            guild_record = guild_dao.get_guild(guild_id)
+                    if fresh_owner_id and str(fresh_owner_id) != str(owner_id):
+                        with GuildDao() as guild_dao_update:
+                            guild_record = guild_dao_update.get_guild(guild_id)
                             if guild_record:
                                 guild_record.owner_id = int(fresh_owner_id)
-                                guild_dao.update_guild(guild_record)
-                    except Exception as e:
-                        logger.error(f"Failed to update owner for guild {guild_id}: {e}")
+                                guild_dao_update.update_guild(guild_record)
+                    
+                    permissions = ["administrator"] if is_owner or has_admin else ["member"]
+                    
+                    return {
+                        "id": str(guild_id),
+                        "name": guild_info.get('name', guild_name) if guild_info else guild_name,
+                        "member_count": member_counts.get(guild_id, 0),
+                        "owner": is_owner,
+                        "permissions": permissions,
+                        "icon": guild_info.get('icon') if guild_info else None,
+                        "banner": guild_info.get('banner') if guild_info else None,
+                    }
+                except Exception as e:
+                    logger.error(f"Error processing guild {guild_id}: {e}", exc_info=True)
+                    return None
 
-                # Determine permissions
-                if is_owner or has_admin:
-                    permissions = ["administrator"]
-                else:
-                    permissions = ["member"]
+            tasks = [process_guild(row[0], row[1], row[2]) for row in results]
+            processed_guilds = await asyncio.gather(*tasks)
+            return [g for g in processed_guilds if g is not None]
 
-                logger.info(f"Processed guild {guild_id} ({guild_name_fresh}): owner={is_owner}, admin={has_admin}")
+        return run_async_threadsafe(get_guilds_async())
 
-                return {
-                    "id": str(guild_id),
-                    "name": guild_name_fresh,
-                    "member_count": member_counts.get(guild_id, 0),
-                    "owner": is_owner,
-                    "permissions": permissions,
-                    "icon": guild_icon,
-                    "banner": guild_banner
-                }
-
-            except Exception as e:
-                logger.error(f"Error processing guild {guild_id}: {e}")
-                import traceback
-                traceback.print_exc()
-                # Return basic guild info on error
-                return {
-                    "id": str(guild_id),
-                    "name": guild_name,
-                    "member_count": member_counts.get(guild_id, 0),
-                    "owner": str(owner_id) == request.user_id,
-                    "permissions": ["member"],
-                    "icon": None,
-                    "banner": None
-                }
-
-        # Process all guilds in parallel
-        tasks = [process_guild(row[0], row[1], row[2]) for row in results]
-        user_guilds = await asyncio.gather(*tasks)
-
-        logger.info(f"Found {len(user_guilds)} guilds for user {request.user_id}")
-        return user_guilds
-
-    # Execute async function synchronously
     try:
-        user_guilds = asyncio.run(get_guilds_async())
-        return jsonify({
-            "success": True,
-            "guilds": user_guilds
-        })
-
+        return jsonify({"success": True, "guilds": get_guilds_sync()})
     except Exception as e:
-        logger.error(f"Error getting guilds from database: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({
-            "success": False,
-            "message": str(e)
-        }), 500
+        logger.error(f"Error getting guilds from database: {e}", exc_info=True)
+        return jsonify({"success": False, "message": str(e)}), 500
 
 @guilds_bp.route('/guilds/<guild_id>/permissions', methods=['GET'])
 @require_auth
-def get_user_guild_permissions(guild_id):
-    """Get user's permissions in a specific guild"""
+def get_guild_permissions(guild_id):
+    """Check user's permissions for a guild"""
     try:
-        with GuildDao() as guild_dao, GuildUserDao() as guild_user_dao:
-            # Check if user is a member of this guild
-            guild_user = guild_user_dao.get_guild_user(int(request.user_id), int(guild_id))
-            if not guild_user or not guild_user.is_active:
-                return jsonify({
-                    "success": False,
-                    "message": "You are not a member of this server"
-                }), 403
+        # Check if user has admin permissions
+        has_admin = run_async_threadsafe(http_client.check_admin(request.user_id, guild_id))
 
-            # Get guild info to check ownership
-            guild = guild_dao.find_by_id(int(guild_id))
-            is_owner = guild and str(guild.owner_id) == request.user_id
-
-        # Check if user has admin permissions via Discord API
-        has_admin = False
-        try:
-            has_admin = check_admin_sync(request.user_id, guild_id)
-        except Exception as e:
-            # Log the actual error instead of silently catching
-            logger.error(f"Error checking admin for user {request.user_id} in guild {guild_id}: {e}")
-            import traceback
-            traceback.print_exc()
-            # If Discord API check fails, fall back to owner status
-            has_admin = is_owner
-
-        permissions = {
-            "guild_id": guild_id,
-            "user_id": request.user_id,
-            "is_owner": is_owner,
-            "has_admin": has_admin or is_owner,
-            "can_configure_bot": has_admin or is_owner,
-            "can_view_stats": True  # All guild members can view stats
-        }
-
+        # For now, has_admin and can_configure_bot are the same
+        # You can add more granular permission checks here if needed
         return jsonify({
             "success": True,
-            "data": permissions
+            "data": {
+                "has_admin": has_admin,
+                "can_configure_bot": has_admin
+            }
         })
-
     except Exception as e:
-        print(f"Error getting user permissions: {e}")
-        return jsonify({
-            "success": False,
-            "message": "Failed to get permissions",
-            "error": str(e)
-        }), 500
+        logger.error(f"Error checking guild permissions: {e}", exc_info=True)
+        return jsonify({"success": False, "message": "Internal server error", "error": str(e)}), 500
 
-@guilds_bp.route('/guilds/<guild_id>/stats-db', methods=['GET'])
+@guilds_bp.route('/guilds/<guild_id>/config-hybrid', methods=['GET', 'POST'])
 @require_auth
-def get_guild_stats_db_only(guild_id):
-    """Get guild statistics using database-only approach (accessible to all guild members)"""
+def guild_config_hybrid(guild_id):
+    """Get or update guild configuration using hybrid approach"""
     try:
-        with GuildDao() as guild_dao, GuildUserDao() as guild_user_dao:
-            # Check if user is a member of this guild
-            guild_user = guild_user_dao.get_guild_user(int(request.user_id), int(guild_id))
-            if not guild_user or not guild_user.is_active:
-                return jsonify({
-                    "success": False,
-                    "message": "You are not a member of this server"
-                }), 403
-
-            # Get guild record
-            guild_record = guild_dao.find_by_id(int(guild_id))
-            if not guild_record:
-                return jsonify({
-                    "success": False,
-                    "message": "Guild not found"
-                }), 404
-
-            # Get basic stats using direct SQL queries
-            try:
-                # Count active members
-                active_members_sql = "SELECT COUNT(*) FROM GuildUsers WHERE guild_id = %s AND is_active = TRUE"
-                active_members_result = guild_dao.execute_query(active_members_sql, (int(guild_id),))
-                active_members = active_members_result[0][0] if active_members_result else 0
-
-                # Total messages in guild
-                total_messages_sql = "SELECT SUM(messages_sent) FROM GuildUsers WHERE guild_id = %s AND is_active = TRUE"
-                total_messages_result = guild_dao.execute_query(total_messages_sql, (int(guild_id),))
-                total_messages = total_messages_result[0][0] if total_messages_result and total_messages_result[0][0] else 0
-
-                # Total exp in guild
-                total_exp_sql = "SELECT SUM(exp) FROM GuildUsers WHERE guild_id = %s AND is_active = TRUE"
-                total_exp_result = guild_dao.execute_query(total_exp_sql, (int(guild_id),))
-                total_exp = total_exp_result[0][0] if total_exp_result and total_exp_result[0][0] else 0
-
-                # Highest level
-                highest_level_sql = "SELECT MAX(level) FROM GuildUsers WHERE guild_id = %s AND is_active = TRUE"
-                highest_level_result = guild_dao.execute_query(highest_level_sql, (int(guild_id),))
-                highest_level = highest_level_result[0][0] if highest_level_result and highest_level_result[0][0] else 0
-
-                # Average level
-                avg_level_sql = "SELECT AVG(level) FROM GuildUsers WHERE guild_id = %s AND is_active = TRUE"
-                avg_level_result = guild_dao.execute_query(avg_level_sql, (int(guild_id),))
-                avg_level = round(avg_level_result[0][0], 1) if avg_level_result and avg_level_result[0][0] else 0
-
-            except Exception as e:
-                # Fallback values if queries fail
-                active_members = guild_record.member_count or 0
-                total_messages = 0
-                total_exp = 0
-                highest_level = 0
-                avg_level = 0
-
-        guild_stats = {
-            "guild_id": guild_id,
-            "guild_name": guild_record.name,
-            "member_count": guild_record.member_count or 0,
-            "total_active_members": active_members,
-            "total_messages": total_messages,
-            "total_exp_distributed": total_exp,
-            "highest_level": highest_level,
-            "avg_level": avg_level,
-            "last_activity": guild_record.last_active,
-            "method": "database_only"
-        }
-
-        return jsonify({
-            "success": True,
-            "data": guild_stats
-        })
-
-    except Exception as e:
-        import traceback
-        return jsonify({
-            "success": False,
-            "message": "Failed to get guild statistics",
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
-
-@guilds_bp.route('/guilds/<guild_id>/config-hybrid', methods=['GET'])
-@require_auth
-def get_guild_config_hybrid(guild_id):
-    """Get guild configuration using hybrid approach (database + live Discord data)"""
-    try:
-        print(f"Hybrid config request for user {request.user_id} in guild {guild_id}")
-
-        # Check permissions using our working HTTP client
-        has_admin = check_admin_sync(request.user_id, guild_id)
+        has_admin = run_async_threadsafe(http_client.check_admin(request.user_id, guild_id))
         if not has_admin:
-            return jsonify({
-                "success": False,
-                "message": "You don't have permission to manage this server"
-            }), 403
+            return jsonify({"success": False, "message": "You don't have permission to manage this server"}), 403
 
-        print("Permission check passed")
+        settings_manager = get_settings_manager()
 
-        # Get guild info from Discord HTTP API
-        guild_info = run_sync(http_client.get_guild_info(guild_id))
-        if not guild_info:
-            return jsonify({
-                "success": False,
-                "message": "Guild not found"
-            }), 404
+        # GET request - fetch current configuration
+        if request.method == 'GET':
+            async def fetch_guild_data():
+                settings = settings_manager.get_settings_dict(int(guild_id))
 
-        # Get guild settings directly from GuildDao to get COMPLETE settings
-        # (not just leveling/roles which is what SettingsManager returns)
-        with GuildDao() as guild_dao:
-            settings_dict = guild_dao.get_guild_settings(int(guild_id)) or {}
+                # Fetch Discord metadata for dropdowns
+                guild_info = await http_client.get_guild_info(guild_id)
+                all_channels = await http_client.get_guild_channels(guild_id)
+                roles = await http_client.get_guild_roles(guild_id)
+                emojis = await http_client.get_guild_emojis(guild_id)
 
-        # Query actual reaction roles from database
-        try:
-            reaction_role_dao = ReactionRoleDao()
-            reaction_roles = reaction_role_dao.get_all_by_guild(int(guild_id))
-            reaction_role_messages = [rr.to_dict() for rr in reaction_roles]
-        except Exception as rr_error:
-            print(f"Error getting reaction roles: {rr_error}")
-            reaction_role_messages = []
+                # Filter to only text and announcement channels (type 0 and 5)
+                channels = [
+                    ch for ch in all_channels
+                    if ch.get('type') in [0, 5]  # Text and announcement channels
+                ]
 
-        # Get live Discord data using our working HTTP client
-        available_roles = []
-        available_channels = get_channels_sync(guild_id)
-
-        # Get roles via HTTP API
-        try:
-            roles_data = run_sync(http_client.get_guild_roles(guild_id))
-            for role in roles_data:
-                if role['name'] != '@everyone':
-                    available_roles.append({
-                        'id': str(role['id']),
-                        'name': role['name'],
-                        'color': f"#{role['color']:06x}" if role['color'] != 0 else "#99AAB5",
-                        'position': role['position'],
-                        'managed': role['managed'],
-                        'mentionable': role['mentionable'],
-                        'hoist': role['hoist']
-                    })
-        except Exception as role_error:
-            print(f"Error getting roles: {role_error}")
-            # Continue without roles if there's an error
-
-        # Build role mappings response - only from actual database data
-        role_mappings = []
-        if 'roles' in settings_dict and 'role_mappings' in settings_dict['roles']:
-            for level, role_ids in settings_dict['roles']['role_mappings'].items():
-                roles = []
-                for role_id in role_ids:
-                    # Find role in available roles
-                    role_info = next((r for r in available_roles if r['id'] == str(role_id)), None)
-                    if role_info:
-                        roles.append(role_info)
-
-                if roles:  # Only include levels that have valid roles
-                    role_mappings.append({
-                        "level": int(level),
-                        "roles": roles
+                # Format emojis with URLs for frontend
+                formatted_emojis = []
+                for emoji in emojis:
+                    ext = 'gif' if emoji.get('animated') else 'png'
+                    formatted_emojis.append({
+                        'id': emoji.get('id'),
+                        'name': emoji.get('name'),
+                        'animated': emoji.get('animated', False),
+                        'url': f"https://cdn.discordapp.com/emojis/{emoji.get('id')}.{ext}"
                     })
 
-        available_emojis = []
-        try:
-            emojis_data = run_sync(http_client.get_guild_emojis(guild_id))
-            for emoji in emojis_data:
-                available_emojis.append({
-                    'id': str(emoji['id']),
-                    'name': emoji['name'],
-                    'roles': emoji.get('roles', []),
-                    'require_colons': emoji.get('require_colons', True),
-                    'managed': emoji.get('managed', False),
-                    'animated': emoji.get('animated', False),
-                    'available': emoji.get('available', True),
-                    'url': f"https://cdn.discordapp.com/emojis/{emoji['id']}.{'gif' if emoji.get('animated') else 'png'}"
-                })
-        except Exception as emoji_error:
-            print(f"Error getting emojis: {emoji_error}")
+                # Get guild icon hash (frontend will construct the URL)
+                guild_icon = guild_info.get('icon') if guild_info else None
 
-        if "games" not in settings_dict:
-            settings_dict["games"] = {
-                "slots-config": {
-                    "enabled": True,
-                    "tier_emojis": {
-                        "common": ["🍒", "🍋", "🍊", "🍇", "🍌"],
-                        "uncommon": ["⭐", "🔔", "❤️"],
-                        "rare": ["🍀"],
-                        "legendary": ["💎", "🎰"],
-                        "scatter": ["⚡"]
-                    },
-                    "symbols": ["🍒", "🍋", "🍊", "🍇", "🍎", "🍌", "⭐", "🔔", "💎", "🎰", "🍀", "❤️"],  # Legacy - deprecated
-                    "match_two_multiplier": 2,
-                    "match_three_multiplier": 10,
-                    "min_bet": 100,
-                    "max_bet": 25000,
-                    "bet_options": [100, 1000, 5000, 10000, 25000]
+                return {
+                    "guild_id": guild_id,
+                    "guild_name": guild_info.get('name') if guild_info else 'Guild Settings',
+                    "guild_icon": guild_icon,
+                    "settings": settings,
+                    "available_channels": channels,
+                    "available_roles": roles,
+                    "available_emojis": formatted_emojis
                 }
-            }
-        elif "slots-config" not in settings_dict["games"]:
-            settings_dict["games"]["slots-config"] = {
-                "enabled": True,
-                "tier_emojis": {
-                    "common": ["🍒", "🍋", "🍊", "🍇", "🍌"],
-                    "uncommon": ["⭐", "🔔", "❤️"],
-                    "rare": ["🍀"],
-                    "legendary": ["💎", "🎰"],
-                    "scatter": ["⚡"]
-                },
-                "symbols": ["🍒", "🍋", "🍊", "🍇", "🍎", "🍌", "⭐", "🔔", "💎", "🎰", "🍀", "❤️"],  # Legacy - deprecated
-                "match_two_multiplier": 2,
-                "match_three_multiplier": 10,
-                "min_bet": 100,
-                "max_bet": 25000,
-                "bet_options": [100, 1000, 5000, 10000, 25000]
-            }
 
-        # Add default Twitch settings if not present
-        if "twitch" not in settings_dict:
-            settings_dict["twitch"] = {
-                "enabled": False,
-                "announcement_channel_id": None,
-                "tracked_streamers": [],
-                "announcement_settings": {
-                    "include_thumbnail": True,
-                    "include_game": True,
-                    "include_viewer_count": True,
-                    "include_start_time": True,
-                    "color": "0x6441A4"
-                },
-                "vod_settings": {
-                    "enabled": False,
-                    "edit_message_when_vod_available": True,
-                    "vod_check_interval_seconds": 300,
-                    "vod_message_suffix": "📺 VOD Available: {vod_url}"
-                },
-                "notification_method": "polling"
-            }
-
-        # Add default Reaction Roles settings if not present, or update with actual data from database
-        if "reaction_roles" not in settings_dict:
-            settings_dict["reaction_roles"] = {
-                "enabled": len(reaction_role_messages) > 0,
-                "messages": reaction_role_messages
-            }
-        else:
-            # Always use fresh data from ReactionRole table, not from settings JSON
-            settings_dict["reaction_roles"]["messages"] = reaction_role_messages
-            # Auto-enable if messages exist
-            if len(reaction_role_messages) > 0 and not settings_dict["reaction_roles"].get("enabled"):
-                settings_dict["reaction_roles"]["enabled"] = True
-
-        # Build response with ONLY real data from database
-        response_data = {
-            "guild_id": guild_id,
-            "guild_name": guild_info["name"],
-            "guild_icon": guild_info.get("icon"),
-            "settings": settings_dict,  # Return exactly what's in the database
-            "available_roles": available_roles,
-            "available_channels": available_channels,
-            "available_emojis": available_emojis,
-            "role_mappings": role_mappings,
-            "permissions": {
-                "method": "hybrid_http_api",
-                "has_admin": True
-            }
-        }
-
-        return jsonify({
-            "success": True,
-            "data": response_data
-        })
-
-    except Exception as e:
-        print(f"Error in hybrid config: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({
-            "success": False,
-            "message": "Internal server error",
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
-
-@guilds_bp.route('/guilds/<guild_id>/config-hybrid', methods=['POST'])
-@require_auth
-def update_guild_config_hybrid(guild_id):
-    """Update guild configuration using hybrid approach"""
-    try:
-        print(f"Update config request for user {request.user_id} in guild {guild_id}")
-
-        # Check permissions
-        has_admin = check_admin_sync(request.user_id, guild_id)
-        if not has_admin:
+            guild_data = run_async_threadsafe(fetch_guild_data())
             return jsonify({
-                "success": False,
-                "message": "You don't have permission to manage this server"
-            }), 403
+                "success": True,
+                "data": guild_data
+            })
 
-        # Get request data
+        # POST request - update configuration
         data = request.get_json()
         if not data or 'settings' not in data:
-            return jsonify({
-                "success": False,
-                "message": "Settings data is required"
-            }), 400
+            return jsonify({"success": False, "message": "Settings data is required"}), 400
 
         settings = data['settings']
+        current_settings = settings_manager.get_settings_dict(int(guild_id))
 
-        # Validate settings structure (updated to support both streaming and legacy twitch)
-        required_sections = ['leveling', 'roles', 'ai', 'games', 'cross_server_portal', 'reaction_roles']
-        for section in required_sections:
-            if section not in settings:
-                return jsonify({
-                    "success": False,
-                    "message": f"Missing required settings section: {section}"
-                }), 400
+        # Twitch subscription logic
+        if 'streaming' in settings and settings['streaming'].get('twitch', {}).get('enabled'):
+            current_twitch_streamers = {s['username'].lower() for s in current_settings.get('streaming', {}).get('twitch', {}).get('tracked_streamers', [])}
+            new_twitch_streamers = {s['username'].lower() for s in settings['streaming']['twitch'].get('tracked_streamers', [])}
+            added_twitch = new_twitch_streamers - current_twitch_streamers
+            removed_twitch = current_twitch_streamers - new_twitch_streamers
 
-        # Validate unified streaming settings (supports both Twitch and YouTube)
-        if 'streaming' in settings and settings['streaming'].get('enabled'):
-            tracked_streamers = settings['streaming'].get('tracked_streamers', [])
+            if added_twitch or removed_twitch:
+                twitch_manager = TwitchSubscriptionManager()
+                for username in added_twitch:
+                    run_async_threadsafe(twitch_manager.subscribe_to_streamer(username, int(guild_id)))
+                for username in removed_twitch:
+                    run_async_threadsafe(twitch_manager.unsubscribe_from_streamer(username, int(guild_id)))
 
-            # Count streamers by platform
-            twitch_count = sum(1 for s in tracked_streamers if s.get('platform') == 'twitch')
-            youtube_count = sum(1 for s in tracked_streamers if s.get('platform') == 'youtube')
+        # YouTube subscription logic
+        if 'streaming' in settings and settings['streaming'].get('youtube', {}).get('enabled'):
+            current_youtube_channels = {s['username'] for s in current_settings.get('streaming', {}).get('youtube', {}).get('tracked_channels', [])}
+            new_youtube_channels = {s['username'] for s in settings['streaming']['youtube'].get('tracked_channels', [])}
+            added_youtube = new_youtube_channels - current_youtube_channels
+            removed_youtube = current_youtube_channels - new_youtube_channels
 
-            # Validate Twitch limit (separate quota)
-            can_add_twitch, error_msg = PremiumChecker.check_streaming_limit(int(guild_id), 'twitch', twitch_count)
-            if not can_add_twitch:
-                return jsonify({
-                    "success": False,
-                    "message": error_msg
-                }), 403
+            if added_youtube or removed_youtube:
+                youtube_webhook_callback_url = current_app.config.get("YOUTUBE_WEBHOOK_CALLBACK_URL")
+                if not youtube_webhook_callback_url:
+                    return jsonify({"success": False, "message": "YouTube webhook callback URL not configured on server."}), 500
 
-            # Validate YouTube limit (separate quota)
-            can_add_youtube, error_msg = PremiumChecker.check_streaming_limit(int(guild_id), 'youtube', youtube_count)
-            if not can_add_youtube:
-                return jsonify({
-                    "success": False,
-                    "message": error_msg
-                }), 403
+                youtube_manager = YouTubeSubscriptionManager(youtube_webhook_callback_url)
+                
+                async def process_youtube_changes():
+                    youtube_service = YouTubeService()
+                    async with aiohttp.ClientSession() as session:
+                        for username in added_youtube:
+                            channel_id = await youtube_service.resolve_channel_id(session, username)
+                            if channel_id:
+                                # Fetch channel info to get the channel name
+                                channel_info = await youtube_service.get_channel_info(session, channel_id)
+                                channel_name = channel_info.get('title') if channel_info else None
+                                await youtube_manager.add_subscription(int(guild_id), channel_id, channel_name)
+                            else:
+                                logger.error(f"Could not resolve YouTube channel ID for username: {username}")
 
-            # Validate each streamer has required fields
-            for streamer in tracked_streamers:
-                if 'platform' not in streamer or not streamer['platform']:
-                    return jsonify({
-                        "success": False,
-                        "message": "Each streamer must have a platform field"
-                    }), 400
+                        for username in removed_youtube:
+                            channel_id = await youtube_service.resolve_channel_id(session, username)
+                            if channel_id:
+                                await youtube_manager.remove_subscription(int(guild_id), channel_id)
+                            else:
+                                logger.error(f"Could not resolve YouTube channel ID for username to remove subscription: {username}")
 
-                if streamer['platform'] not in ['twitch', 'youtube']:
-                    return jsonify({
-                        "success": False,
-                        "message": f"Invalid platform: {streamer['platform']}. Must be 'twitch' or 'youtube'"
-                    }), 400
+                run_async_threadsafe(process_youtube_changes())
 
-                if 'username' not in streamer or not streamer['username']:
-                    return jsonify({
-                        "success": False,
-                        "message": "Each streamer must have a username"
-                    }), 400
-
-        # Validate legacy Twitch settings if present (backward compatibility)
-        elif 'twitch' in settings and settings['twitch'].get('enabled'):
-            # Auto-migrate to streaming format on save
-            from acosmibot.utils.settings_migrator import migrate_twitch_to_streaming
-            settings = migrate_twitch_to_streaming(settings)
-
-            # Validate after migration
-            tracked_streamers = settings['streaming'].get('tracked_streamers', [])
-            twitch_count = len(tracked_streamers)
-            can_add, error_msg = PremiumChecker.check_streaming_limit(int(guild_id), 'twitch', twitch_count)
-
-            if not can_add:
-                return jsonify({
-                    "success": False,
-                    "message": error_msg
-                }), 403
-
-        # Validate leveling settings
-        leveling_required_fields = {
-            'enabled': bool,
-            'level_up_announcements': bool,
-            'daily_announcements_enabled': bool
-        }
-
-        for field, field_type in leveling_required_fields.items():
-            if field not in settings['leveling']:
-                return jsonify({
-                    "success": False,
-                    "message": f"Missing required leveling field: {field}"
-                }), 400
-
-            if not isinstance(settings['leveling'][field], field_type):
-                return jsonify({
-                    "success": False,
-                    "message": f"Invalid type for leveling.{field}, expected {field_type.__name__}"
-                }), 400
-
-        # Validate roles mode
-        if settings['roles']['mode'] not in ['progressive', 'single', 'cumulative']:
-            return jsonify({
-                "success": False,
-                "message": "roles.mode must be one of: progressive, single, cumulative"
-            }), 400
-
-        if 'games' in settings and 'slots-config' in settings['games']:
-            slots_config = settings['games']['slots-config']
-
-            # Only validate guild-specific fields: enabled and symbols
-            # Multipliers, min_bet, max_bet, and bet_options are hardcoded in bot for fairness
-            # (cannot be customized per guild to ensure fair leaderboard competition)
-
-            # Validate 'enabled' field
-            if 'enabled' not in slots_config:
-                return jsonify({
-                    "success": False,
-                    "message": "Missing required games.slots-config field: enabled"
-                }), 400
-
-            if not isinstance(slots_config['enabled'], bool):
-                return jsonify({
-                    "success": False,
-                    "message": "Invalid type for games.slots-config.enabled, expected bool"
-                }), 400
-
-            # Validate 'symbols' field if provided (legacy)
-            if 'symbols' in slots_config:
-                if not isinstance(slots_config['symbols'], list):
-                    return jsonify({
-                        "success": False,
-                        "message": "Invalid type for games.slots-config.symbols, expected list"
-                    }), 400
-
-                if len(slots_config['symbols']) != 12:
-                    return jsonify({
-                        "success": False,
-                        "message": "games.slots-config.symbols must contain exactly 12 emojis"
-                    }), 400
-
-            # Validate 'tier_emojis' structure if provided
-            if 'tier_emojis' in slots_config:
-                tier_emojis = slots_config['tier_emojis']
-
-                if not isinstance(tier_emojis, dict):
-                    return jsonify({
-                        "success": False,
-                        "message": "Invalid type for tier_emojis, expected dict"
-                    }), 400
-
-                # Define expected structure with limits
-                tier_limits = {
-                    'common': 5,
-                    'uncommon': 3,
-                    'rare': 1,
-                    'legendary': 2,
-                    'scatter': 1
-                }
-
-                # Validate each tier
-                for tier, limit in tier_limits.items():
-                    if tier in tier_emojis:
-                        tier_list = tier_emojis[tier]
-
-                        if not isinstance(tier_list, list):
-                            return jsonify({
-                                "success": False,
-                                "message": f"tier_emojis.{tier} must be a list"
-                            }), 400
-
-                        if len(tier_list) > limit:
-                            return jsonify({
-                                "success": False,
-                                "message": f"tier_emojis.{tier} exceeds limit of {limit}"
-                            }), 400
-
-                        # Validate each emoji is a string
-                        for emoji in tier_list:
-                            if not isinstance(emoji, str):
-                                return jsonify({
-                                    "success": False,
-                                    "message": f"All emojis in tier_emojis.{tier} must be strings"
-                                }), 400
-
-            # Remove any bet-related fields from the config before saving
-            # These are hardcoded in the bot and should not be stored in DB
-            slots_config.pop('match_two_multiplier', None)
-            slots_config.pop('match_three_multiplier', None)
-            slots_config.pop('min_bet', None)
-            slots_config.pop('max_bet', None)
-            slots_config.pop('bet_options', None)
-
-        # Validate cross-server portal settings
-        if 'cross_server_portal' in settings:
-            portal_config = settings['cross_server_portal']
-
-            # Validate 'enabled' field
-            if 'enabled' not in portal_config:
-                return jsonify({
-                    "success": False,
-                    "message": "Missing required cross_server_portal field: enabled"
-                }), 400
-
-            if not isinstance(portal_config['enabled'], bool):
-                return jsonify({
-                    "success": False,
-                    "message": "Invalid type for cross_server_portal.enabled, expected bool"
-                }), 400
-
-            # Validate optional fields if portal is enabled
-            if portal_config.get('enabled'):
-                # Validate portal_cost if provided
-                if 'portal_cost' in portal_config:
-                    if not isinstance(portal_config['portal_cost'], int):
-                        return jsonify({
-                            "success": False,
-                            "message": "Invalid type for cross_server_portal.portal_cost, expected int"
-                        }), 400
-                    if portal_config['portal_cost'] < 100 or portal_config['portal_cost'] > 100000:
-                        return jsonify({
-                            "success": False,
-                            "message": "cross_server_portal.portal_cost must be between 100 and 100000"
-                        }), 400
-
-                # Validate display_name if provided
-                if 'display_name' in portal_config and portal_config['display_name']:
-                    if not isinstance(portal_config['display_name'], str):
-                        return jsonify({
-                            "success": False,
-                            "message": "Invalid type for cross_server_portal.display_name, expected string"
-                        }), 400
-                    if len(portal_config['display_name']) > 50:
-                        return jsonify({
-                            "success": False,
-                            "message": "cross_server_portal.display_name must be 50 characters or less"
-                        }), 400
-
-        # Validate reaction_roles settings
-        if 'reaction_roles' in settings:
-            rr_config = settings['reaction_roles']
-
-            # Validate 'enabled' field
-            if 'enabled' not in rr_config:
-                return jsonify({
-                    "success": False,
-                    "message": "Missing required reaction_roles field: enabled"
-                }), 400
-
-            if not isinstance(rr_config['enabled'], bool):
-                return jsonify({
-                    "success": False,
-                    "message": "Invalid type for reaction_roles.enabled, expected bool"
-                }), 400
-
-            # Validate 'messages' field
-            if 'messages' not in rr_config:
-                return jsonify({
-                    "success": False,
-                    "message": "Missing required reaction_roles field: messages"
-                }), 400
-
-            if not isinstance(rr_config['messages'], list):
-                return jsonify({
-                    "success": False,
-                    "message": "Invalid type for reaction_roles.messages, expected list"
-                }), 400
-
-        # Update settings in database
-        settings_manager = get_settings_manager()
         success = settings_manager.update_settings_dict(guild_id, settings)
 
         if not success:
-            return jsonify({
-                "success": False,
-                "message": "Failed to update settings in database"
-            }), 500
-
-        print(f"Successfully updated settings for guild {guild_id}")
+            return jsonify({"success": False, "message": "Failed to update settings in database"}), 500
 
         return jsonify({
             "success": True,
             "message": "Settings updated successfully",
-            "data": {
-                "guild_id": guild_id,
-                "settings": settings,
-                "updated_at": datetime.now().isoformat()
-            }
+            "data": {"guild_id": guild_id, "settings": settings, "updated_at": datetime.now().isoformat()}
         })
 
     except Exception as e:
-        print(f"Error updating guild config: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({
-            "success": False,
-            "message": "Internal server error",
-            "error": str(e)
-        }), 500
+        logger.error(f"Error updating guild config: {e}", exc_info=True)
+        return jsonify({"success": False, "message": "Internal server error", "error": str(e)}), 500
 
-@guilds_bp.route('/guilds/<guild_id>/leveling', methods=['PUT'])
-@require_auth
-def update_leveling_settings(guild_id):
-    """Update leveling settings"""
-    try:
-        # Check permissions
-        has_admin = check_admin_sync(request.user_id, guild_id)
-        if not has_admin:
-            return jsonify({
-                "success": False,
-                "message": "You don't have permission to manage this server"
-            }), 403
-
-        # Validate request data
-        try:
-            updates = UpdateLevelingSettingsRequest(**request.json)
-        except Exception as e:
-            return jsonify({
-                "success": False,
-                "message": "Invalid request data",
-                "error": str(e)
-            }), 400
-
-        # Get current settings - use GuildDao directly to get complete settings
-        with GuildDao() as guild_dao:
-            settings_dict = guild_dao.get_guild_settings(int(guild_id)) or {}
-
-        # Update leveling settings
-        if 'leveling' not in settings_dict:
-            settings_dict['leveling'] = {}
-
-        settings_dict['leveling'].update({
-            'enabled': updates.enabled,
-            'exp_per_message': updates.exp_per_message,
-            'exp_cooldown_seconds': updates.exp_cooldown_seconds,
-            'level_up_announcements': updates.level_up_announcements,
-            'announcement_channel_id': updates.announcement_channel_id
-        })
-
-        # Save updated settings
-        success = settings_manager.update_settings_dict(guild_id, settings_dict)
-
-        if success:
-            return jsonify({
-                "success": True,
-                "message": "Leveling settings updated successfully",
-                "data": settings_dict['leveling']
-            })
-        else:
-            return jsonify({
-                "success": False,
-                "message": "Failed to update leveling settings"
-            }), 500
-
-    except Exception as e:
-        print(f"Error updating leveling settings: {e}")
-        return jsonify({
-            "success": False,
-            "message": "Internal server error",
-            "error": str(e)
-        }), 500
-
-@guilds_bp.route('/guilds/<guild_id>/ai', methods=['PUT'])
-@require_auth
-def update_ai_settings(guild_id):
-    """Update AI settings"""
-    try:
-        # Check permissions
-        has_admin = check_admin_sync(request.user_id, guild_id)
-        if not has_admin:
-            return jsonify({
-                "success": False,
-                "message": "You don't have permission to manage this server"
-            }), 403
-
-        # Validate request data
-        try:
-            updates = UpdateAISettingsRequest(**request.json)
-        except Exception as e:
-            return jsonify({
-                "success": False,
-                "message": "Invalid request data",
-                "error": str(e)
-            }), 400
-
-        # Get current settings - use GuildDao directly to get complete settings
-        with GuildDao() as guild_dao:
-            settings_dict = guild_dao.get_guild_settings(int(guild_id)) or {}
-
-        # Update AI settings
-        if 'ai' not in settings_dict:
-            settings_dict['ai'] = {}
-
-        settings_dict['ai'].update({
-            'enabled': updates.enabled,
-            'instructions': updates.instructions,
-            'model': updates.model,
-            'daily_limit': updates.daily_limit
-        })
-
-        # Save updated settings
-        success = settings_manager.update_settings_dict(guild_id, settings_dict)
-
-        if success:
-            return jsonify({
-                "success": True,
-                "message": "AI settings updated successfully",
-                "data": settings_dict['ai']
-            })
-        else:
-            return jsonify({
-                "success": False,
-                "message": "Failed to update AI settings"
-            }), 500
-
-    except Exception as e:
-        print(f"Error updating AI settings: {e}")
-        return jsonify({
-            "success": False,
-            "message": "Internal server error",
-            "error": str(e)
-        }), 500
+# Other routes can be added below

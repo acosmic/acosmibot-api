@@ -12,6 +12,7 @@ from .youtube import youtube_bp
 from .reaction_roles import reaction_roles_bp
 from .subscriptions import subscriptions_bp
 from .custom_commands import custom_commands_bp
+from .youtube_webhooks import youtube_webhooks_bp
 from .ai_images import ai_images_bp
 
 __all__ = [
@@ -27,5 +28,6 @@ __all__ = [
     'reaction_roles_bp',
     'subscriptions_bp',
     'custom_commands_bp',
-    'ai_images_bp'
+    'ai_images_bp',
+    'youtube_webhooks_bp'
 ]

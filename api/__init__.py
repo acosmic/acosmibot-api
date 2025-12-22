@@ -1,7 +1,79 @@
 """Application factory for Flask API"""
+import os
+import sys
+from pathlib import Path
+from dotenv import load_dotenv
+
+# --- Path Setup ---
+# Add project root to sys.path to allow importing 'acosmibot' module
+project_root = Path(__file__).parent.parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
+# Load environment variables from the correct .env file
+dotenv_path = project_root / 'acosmibot' / '.env'
+load_dotenv(dotenv_path=dotenv_path)
+
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from contextlib import asynccontextmanager
 from flask import Flask
 from flask_cors import CORS
 from config import config
+import asyncio
+import threading
+import atexit
+
+# --- Global Async Event Loop Setup ---
+# This setup runs a single asyncio event loop in a background thread.
+# Synchronous Flask routes can then safely submit async tasks to this
+# persistent loop, avoiding "different loop" errors with shared async resources
+# like the SQLAlchemy engine.
+
+loop = asyncio.new_event_loop()
+
+def run_background_loop(loop):
+    asyncio.set_event_loop(loop)
+    loop.run_forever()
+
+background_thread = threading.Thread(target=run_background_loop, args=(loop,), daemon=True)
+background_thread.start()
+
+def run_async_threadsafe(coro):
+    """Safely runs a coroutine on the background event loop from a sync thread."""
+    return asyncio.run_coroutine_threadsafe(coro, loop).result()
+
+def stop_background_loop():
+    """Gracefully stop the background event loop."""
+    loop.call_soon_threadsafe(loop.stop)
+
+atexit.register(stop_background_loop)
+
+
+# --- Database Setup ---
+DB_USER = os.getenv("db_user")
+DB_PASSWORD = os.getenv("db_password")
+DB_HOST = os.getenv("db_host")
+DB_NAME = os.getenv("db_name")
+
+DATABASE_URL = f"mysql+aiomysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}/{DB_NAME}"
+
+async_engine = create_async_engine(DATABASE_URL, pool_recycle=3600)
+AsyncSessionLocal = async_sessionmaker(autocommit=False, autoflush=False, bind=async_engine)
+
+@asynccontextmanager
+async def get_db_session():
+    """Provide a transactional scope around a series of operations."""
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+            await session.commit()
+        except:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+
+# --- End Database Setup ---
 
 
 def create_app(config_name='default'):
@@ -23,6 +95,8 @@ def create_app(config_name='default'):
         users_bp, portal_bp, admin_bp, twitch_bp, youtube_bp,
         reaction_roles_bp, subscriptions_bp, custom_commands_bp, ai_images_bp
     )
+    from api.blueprints.twitch_webhooks import twitch_webhooks_bp
+    from api.blueprints.youtube_webhooks import youtube_webhooks_bp
 
     app.register_blueprint(utilities_bp)
     app.register_blueprint(auth_bp)
@@ -33,6 +107,8 @@ def create_app(config_name='default'):
     app.register_blueprint(admin_bp)
     app.register_blueprint(twitch_bp)
     app.register_blueprint(youtube_bp)
+    app.register_blueprint(twitch_webhooks_bp)  # EventSub webhooks
+    app.register_blueprint(youtube_webhooks_bp) # YouTube WebSub webhooks
     app.register_blueprint(reaction_roles_bp)
     app.register_blueprint(subscriptions_bp)
     app.register_blueprint(custom_commands_bp)
