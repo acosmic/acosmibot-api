@@ -19,9 +19,16 @@ def login():
 @auth_bp.route('/callback')
 def callback():
     """Handle Discord OAuth callback"""
+    # Handle denied access
+    if 'error' in request.args:
+        error = request.args.get('error')
+        error_description = request.args.get('error_description')
+        return redirect(f"https://acosmibot.com/?error={error}&error_description={error_description}")
+
     code = request.args.get('code')
     if not code:
-        return jsonify({'error': 'No authorization code received'}), 400
+        # Redirect with a generic error if no code and no specific error from Discord
+        return redirect("https://acosmibot.com/?error=missing_code&error_description=No_authorization_code_received")
 
     # Exchange code for token
     token_data = oauth_service.exchange_code(code)
