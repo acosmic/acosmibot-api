@@ -69,7 +69,10 @@ def get_user_guilds():
                                 guild_dao_update.update_guild(guild_record)
                     
                     permissions = ["administrator"] if is_owner or has_admin else ["member"]
-                    
+
+                    # Get premium tier for this guild
+                    premium_tier = PremiumChecker.get_guild_tier(guild_id)
+
                     return {
                         "id": str(guild_id),
                         "name": guild_info.get('name', guild_name) if guild_info else guild_name,
@@ -78,6 +81,7 @@ def get_user_guilds():
                         "permissions": permissions,
                         "icon": guild_info.get('icon') if guild_info else None,
                         "banner": guild_info.get('banner') if guild_info else None,
+                        "premium_tier": premium_tier,
                     }
                 except Exception as e:
                     logger.error(f"Error processing guild {guild_id}: {e}", exc_info=True)
@@ -158,10 +162,14 @@ def guild_config_hybrid(guild_id):
                 # Get guild icon hash (frontend will construct the URL)
                 guild_icon = guild_info.get('icon') if guild_info else None
 
+                # Get premium tier information
+                premium_tier = PremiumChecker.get_guild_tier(int(guild_id))
+
                 return {
                     "guild_id": guild_id,
                     "guild_name": guild_info.get('name') if guild_info else 'Guild Settings',
                     "guild_icon": guild_icon,
+                    "premium_tier": premium_tier,
                     "settings": settings,
                     "available_channels": channels,
                     "available_roles": roles,
@@ -183,9 +191,9 @@ def guild_config_hybrid(guild_id):
         current_settings = settings_manager.get_settings_dict(int(guild_id))
 
         # Twitch subscription logic
-        if 'streaming' in settings and settings['streaming'].get('twitch', {}).get('enabled'):
-            current_twitch_streamers = {s['username'].lower() for s in current_settings.get('streaming', {}).get('twitch', {}).get('tracked_streamers', [])}
-            new_twitch_streamers = {s['username'].lower() for s in settings['streaming']['twitch'].get('tracked_streamers', [])}
+        if 'twitch' in settings and settings['twitch'].get('enabled'):
+            current_twitch_streamers = {s['username'].lower() for s in current_settings.get('twitch', {}).get('tracked_streamers', [])}
+            new_twitch_streamers = {s['username'].lower() for s in settings['twitch'].get('tracked_streamers', [])}
             added_twitch = new_twitch_streamers - current_twitch_streamers
             removed_twitch = current_twitch_streamers - new_twitch_streamers
 
@@ -197,9 +205,9 @@ def guild_config_hybrid(guild_id):
                     run_async_threadsafe(twitch_manager.unsubscribe_from_streamer(username, int(guild_id)))
 
         # YouTube subscription logic
-        if 'streaming' in settings and settings['streaming'].get('youtube', {}).get('enabled'):
-            current_youtube_channels = {s['username'] for s in current_settings.get('streaming', {}).get('youtube', {}).get('tracked_channels', [])}
-            new_youtube_channels = {s['username'] for s in settings['streaming']['youtube'].get('tracked_channels', [])}
+        if 'youtube' in settings and settings['youtube'].get('enabled'):
+            current_youtube_channels = {s['username'] for s in current_settings.get('youtube', {}).get('tracked_streamers', [])}
+            new_youtube_channels = {s['username'] for s in settings['youtube'].get('tracked_streamers', [])}
             added_youtube = new_youtube_channels - current_youtube_channels
             removed_youtube = current_youtube_channels - new_youtube_channels
 
@@ -247,4 +255,46 @@ def guild_config_hybrid(guild_id):
         logger.error(f"Error updating guild config: {e}", exc_info=True)
         return jsonify({"success": False, "message": "Internal server error", "error": str(e)}), 500
 
-# Other routes can be added below
+
+@guilds_bp.route('/guilds/<guild_id>/stats-db', methods=['GET'])
+@require_auth
+def get_guild_stats_db(guild_id):
+    """Get guild statistics from database"""
+    try:
+        with GuildUserDao() as guild_user_dao:
+            # Verify user is member of this guild
+            guild_user = guild_user_dao.get_guild_user(int(request.user_id), int(guild_id))
+            if not guild_user or not guild_user.is_active:
+                return jsonify({
+                    "success": False,
+                    "message": "You are not a member of this server"
+                }), 403
+
+            # Get guild stats
+            stats = guild_user_dao.get_guild_stats(int(guild_id))
+
+        # Get guild name from GuildDao
+        with GuildDao() as guild_dao:
+            guild = guild_dao.get_guild(int(guild_id))
+            guild_name = guild.name if guild else "Unknown"
+
+        return jsonify({
+            "success": True,
+            "data": {
+                "guild_name": guild_name,
+                "member_count": stats.get('total_active_users', 0),
+                "total_active_members": stats.get('total_active_users', 0),
+                "total_messages": stats.get('total_messages', 0),
+                "total_exp_distributed": stats.get('total_exp', 0),
+                "total_currency": stats.get('total_currency', 0),
+                "total_reactions": stats.get('total_reactions', 0)
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"Error getting guild stats: {e}")
+        return jsonify({
+            "success": False,
+            "message": "Failed to get guild stats",
+            "error": str(e)
+        }), 500

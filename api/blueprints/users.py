@@ -210,7 +210,15 @@ def get_user_guild_stats(guild_id, user_id):
 
             # Get the target user's stats
             guild_user = guild_user_dao.get_guild_user(int(user_id), int(guild_id))
-        
+
+            # Get user's rank in the guild (by exp)
+            user_rank = None
+            if guild_user and guild_user.is_active:
+                rank_result = guild_user_dao.get_guild_user_rank(int(user_id), int(guild_id))
+                if rank_result:
+                    # user_rank is the last element in the tuple
+                    user_rank = rank_result[-1]
+
         if guild_user and guild_user.is_active:
             return jsonify({
                 "success": True,
@@ -220,11 +228,15 @@ def get_user_guild_stats(guild_id, user_id):
                     "level": guild_user.level,
                     "exp": guild_user.exp,
                     "currency": guild_user.currency,
+                    "messages": guild_user.messages_sent,
                     "messages_sent": guild_user.messages_sent,
-                    "last_message_at": guild_user.last_message_at.strftime('%Y-%m-%d %H:%M:%S') if guild_user.last_message_at else None,
+                    "reactions": guild_user.reactions_sent,
+                    "reactions_sent": guild_user.reactions_sent,
+                    "rank": user_rank,
+                    "last_active": guild_user.last_active.strftime('%Y-%m-%d %H:%M:%S') if guild_user.last_active else None,
                     "joined_at": guild_user.joined_at.strftime('%Y-%m-%d') if guild_user.joined_at else None,
                     "streak": guild_user.streak,
-                    "last_daily_claim": guild_user.last_daily_claim.strftime('%Y-%m-%d') if guild_user.last_daily_claim else None
+                    "last_daily": guild_user.last_daily.strftime('%Y-%m-%d') if guild_user.last_daily else None
                 }
             })
         else:

@@ -200,11 +200,11 @@ class TwitchSubscriptionManager:
                 if not settings:
                     continue
 
-                streaming_settings = settings.get('streaming', {})
-                if not streaming_settings.get('enabled'):
+                twitch_settings = settings.get('twitch', {})
+                if not twitch_settings.get('enabled'):
                     continue
 
-                for streamer_config in streaming_settings.get('tracked_streamers', []):
+                for streamer_config in twitch_settings.get('tracked_streamers', []):
                     if streamer_config.get('platform') == 'twitch':
                         username = streamer_config.get('username')
                         if username:

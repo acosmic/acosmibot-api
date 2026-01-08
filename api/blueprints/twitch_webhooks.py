@@ -21,7 +21,7 @@ from api.services.twitch_eventsub_service import TwitchEventSubService
 from api.services.discord_integration import http_client
 from Dao.TwitchWebhookEventDao import TwitchWebhookEventDao
 from Dao.TwitchEventSubDao import TwitchEventSubDao
-from Dao.StreamingAnnouncementDao import StreamingAnnouncementDao
+from Dao.TwitchAnnouncementDao import TwitchAnnouncementDao
 from Dao.GuildDao import GuildDao
 from Services.twitch_service import TwitchService
 
@@ -201,7 +201,7 @@ async def handle_stream_online(event: dict, event_id: str):
 
         # Process each tracking guild
         guild_dao = GuildDao()
-        announcement_dao = StreamingAnnouncementDao()
+        announcement_dao = TwitchAnnouncementDao()
 
         for guild_id_str in tracked_guild_ids:
             try:
@@ -213,14 +213,14 @@ async def handle_stream_online(event: dict, event_id: str):
                     logger.warning(f"No settings found for guild {guild_id}")
                     continue
 
-                streaming_settings = settings.get('streaming', {})
-                if not streaming_settings.get('enabled'):
+                twitch_settings = settings.get('twitch', {})
+                if not twitch_settings.get('enabled'):
                     logger.info(f"Streaming disabled for guild {guild_id}")
                     continue
 
                 # Find streamer config
                 streamer_config = None
-                for s in streaming_settings.get('tracked_streamers', []):
+                for s in twitch_settings.get('tracked_streamers', []):
                     if s.get('platform') == 'twitch' and s.get('username').lower() == broadcaster_username.lower():
                         streamer_config = s
                         break
@@ -230,13 +230,13 @@ async def handle_stream_online(event: dict, event_id: str):
                     continue
 
                 # Get announcement channel
-                channel_id = streaming_settings.get('announcement_channel_id')
+                channel_id = twitch_settings.get('announcement_channel_id')
                 if not channel_id:
                     logger.warning(f"No announcement channel configured for guild {guild_id}")
                     continue
 
                 # Build Discord announcement
-                ann_settings = streaming_settings.get('announcement_settings', {})
+                ann_settings = twitch_settings.get('announcement_settings', {})
                 color_hex = ann_settings.get('twitch_color', '0x6441A4')
                 color = int(color_hex.replace('0x', ''), 16) if isinstance(color_hex, str) else color_hex
 
@@ -288,20 +288,17 @@ async def handle_stream_online(event: dict, event_id: str):
                 message = await http_client.post_message(int(channel_id), message_data)
 
                 if message:
-                    # Store in StreamingAnnouncements
+                    # Store in TwitchAnnouncements
                     started_dt = datetime.strptime(stream_started_at, "%Y-%m-%dT%H:%M:%SZ")
                     announcement_dao.create_announcement(
-                        platform='twitch',
                         guild_id=guild_id,
-                        channel_id=int(channel_id),
-                        message_id=message['id'],
                         streamer_username=broadcaster_username,
-                        streamer_id=broadcaster_user_id,
-                        stream_id=stream_id,
-                        stream_title=stream_title,
-                        game_name=game_name,
+                        message_id=message['id'],
+                        channel_id=int(channel_id),
                         stream_started_at=started_dt,
-                        initial_viewer_count=viewer_count
+                        initial_viewer_count=viewer_count,
+                        stream_title=stream_title,
+                        game_name=game_name
                     )
                     logger.info(f"Posted announcement for {broadcaster_username} in guild {guild_id}")
                 else:
@@ -325,7 +322,7 @@ async def handle_stream_offline(event: dict, event_id: str):
 
     Flow:
     1. Get broadcaster info
-    2. Query StreamingAnnouncements for active streams (stream_ended_at IS NULL)
+    2. Query TwitchAnnouncements for active streams (stream_ended_at IS NULL)
     3. For each active announcement:
        - Mark stream as offline
        - Calculate duration
@@ -350,36 +347,50 @@ async def handle_stream_offline(event: dict, event_id: str):
     stream_end_time = datetime.utcnow()
 
     # Process each guild's active announcement
-    announcement_dao = StreamingAnnouncementDao()
+    announcement_dao = TwitchAnnouncementDao()
 
     for guild_id_str in tracked_guild_ids:
         try:
             guild_id = int(guild_id_str)
 
-            # Get active announcement
-            announcement = announcement_dao.get_active_stream_for_streamer(
-                'twitch',
-                guild_id,
-                broadcaster_username
-            )
+            # Get active announcement from TwitchAnnouncements
+            result = announcement_dao.execute_query("""
+                SELECT id, message_id, channel_id, stream_started_at, initial_viewer_count, final_viewer_count
+                FROM TwitchAnnouncements
+                WHERE guild_id = %s
+                AND streamer_username = %s
+                AND stream_ended_at IS NULL
+                ORDER BY stream_started_at DESC
+                LIMIT 1
+            """, (guild_id, broadcaster_username))
 
-            if not announcement:
+            if not result or len(result) == 0:
                 logger.info(f"No active announcement for {broadcaster_username} in guild {guild_id}")
                 continue
 
-            # Calculate duration
-            duration_seconds = int((stream_end_time - announcement.stream_started_at).total_seconds())
+            # Parse announcement data
+            announcement_id, message_id, channel_id, stream_started_at, initial_viewer_count, final_viewer_count = result[0]
 
-            # Mark stream as offline
+            # Calculate duration
+            duration_seconds = int((stream_end_time - stream_started_at).total_seconds())
+
+            # Mark stream as offline in database
             announcement_dao.mark_stream_offline(
-                'twitch',
                 guild_id,
                 broadcaster_username,
-                stream_end_time,
-                announcement.final_viewer_count or announcement.initial_viewer_count
+                final_viewer_count=final_viewer_count or initial_viewer_count,
+                stream_duration_seconds=duration_seconds
             )
 
-            # Edit Discord message
+            # Edit Discord message (create a simple object with needed fields)
+            class AnnouncementData:
+                pass
+            announcement = AnnouncementData()
+            announcement.channel_id = channel_id
+            announcement.message_id = message_id
+            announcement.stream_started_at = stream_started_at
+            announcement.final_viewer_count = final_viewer_count
+
             await edit_announcement_on_stream_end(announcement, stream_end_time, duration_seconds)
 
             logger.info(f"Marked stream offline for {broadcaster_username} in guild {guild_id}")
@@ -454,13 +465,6 @@ async def edit_announcement_on_stream_end(announcement, stream_end_time: datetim
                         "inline": False
                     }
                 ])
-
-                if announcement.final_viewer_count is not None:
-                    embed['fields'].append({
-                        "name": "Final Viewers",
-                        "value": f"{announcement.final_viewer_count:,}",
-                        "inline": False
-                    })
 
                 # Edit message
                 async with session.patch(url, headers=headers, json={"embeds": [embed]}) as edit_resp:

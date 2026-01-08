@@ -29,7 +29,14 @@ class DiscordOAuthService:
         }
 
         response = requests.post('https://discord.com/api/oauth2/token', data=data)
-        return response.json() if response.status_code == 200 else None
+
+        if response.status_code != 200:
+            print(f"Discord OAuth Error: Status {response.status_code}")
+            print(f"Response: {response.text}")
+            print(f"Redirect URI used: {self.redirect_uri}")
+            return None
+
+        return response.json()
 
     def get_user_info(self, access_token):
         headers = {'Authorization': f'Bearer {access_token}'}
