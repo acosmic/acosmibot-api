@@ -79,6 +79,14 @@ def create_checkout():
             }), 400
 
         guild_id = data['guild_id']
+        tier = data.get('tier', 'premium')  # Default to 'premium' if not specified
+
+        # Validate tier
+        if tier not in ['premium', 'premium_plus_ai']:
+            return jsonify({
+                "success": False,
+                "message": "Invalid tier. Must be 'premium' or 'premium_plus_ai'"
+            }), 400
 
         # Check permissions
         has_admin = check_admin_sync(request.user_id, guild_id)
@@ -92,11 +100,18 @@ def create_checkout():
         with SubscriptionDao() as sub_dao:
             existing = sub_dao.get_by_guild_id(str(guild_id))
 
-        if existing and existing.status == 'active' and existing.tier == 'premium':
-            return jsonify({
-                "success": False,
-                "message": "Guild already has an active premium subscription"
-            }), 400
+        if existing and existing.status == 'active':
+            # Allow upgrade from premium to premium_plus_ai
+            if existing.tier == 'premium' and tier == 'premium':
+                return jsonify({
+                    "success": False,
+                    "message": "Guild already has an active premium subscription"
+                }), 400
+            elif existing.tier == 'premium_plus_ai':
+                return jsonify({
+                    "success": False,
+                    "message": "Guild already has an active premium plus AI subscription"
+                }), 400
 
         # Get guild info
         with GuildDao() as guild_dao:
@@ -116,7 +131,8 @@ def create_checkout():
             guild_name=guild.name,
             user_id=str(request.user_id),
             success_url=success_url,
-            cancel_url=cancel_url
+            cancel_url=cancel_url,
+            tier=tier
         )
 
         if not session:
@@ -276,7 +292,7 @@ def customer_portal():
 @subscriptions_bp.route('/subscriptions/test-upgrade', methods=['POST'])
 @require_auth
 def test_upgrade_guild():
-    """TEST ONLY: Manually upgrade a guild to premium for testing"""
+    """TEST ONLY: Manually upgrade a guild to any tier for testing"""
     try:
         # Disable in production - only allow when using test Stripe keys
         stripe_key = os.getenv('STRIPE_SECRET_KEY', '')
@@ -294,6 +310,14 @@ def test_upgrade_guild():
             }), 400
 
         guild_id = data['guild_id']
+        tier = data.get('tier', 'premium')  # Default to 'premium' if not specified
+
+        # Validate tier
+        if tier not in ['free', 'premium', 'premium_plus_ai']:
+            return jsonify({
+                "success": False,
+                "message": "Invalid tier. Must be 'free', 'premium', or 'premium_plus_ai'"
+            }), 400
 
         # Check permissions
         has_admin = check_admin_sync(request.user_id, guild_id)
@@ -303,19 +327,19 @@ def test_upgrade_guild():
                 "message": "You don't have permission to manage this server's subscription"
             }), 403
 
-        # Update Guilds table to set premium tier
+        # Update Guilds table to set tier
         with GuildDao() as guild_dao:
             guild_dao.execute_query(
-                "UPDATE Guilds SET subscription_tier = 'premium', subscription_status = 'active' WHERE id = %s",
-                (int(guild_id),),
+                "UPDATE Guilds SET subscription_tier = %s, subscription_status = 'active' WHERE id = %s",
+                (tier, int(guild_id)),
                 commit=True
             )
 
-        logger.info(f"Test upgrade: Guild {guild_id} upgraded to premium by user {request.user_id}")
+        logger.info(f"Test upgrade: Guild {guild_id} upgraded to {tier} by user {request.user_id}")
 
         return jsonify({
             "success": True,
-            "message": "Guild upgraded to premium (test mode)"
+            "message": f"Guild upgraded to {tier} (test mode)"
         })
 
     except Exception as e:
@@ -397,6 +421,9 @@ def handle_checkout_completed(session):
         logger.error("No guild_id in checkout session metadata")
         return
 
+    # Extract tier from metadata (default to 'premium' for backwards compatibility)
+    tier = session['metadata'].get('tier', 'premium')
+
     subscription_id = session.get('subscription')
     customer_id = session.get('customer')
 
@@ -414,7 +441,7 @@ def handle_checkout_completed(session):
     with SubscriptionDao() as sub_dao:
         sub_dao.create_subscription(
             guild_id=guild_id,
-            tier='premium',
+            tier=tier,
             stripe_subscription_id=subscription_id,
             stripe_customer_id=customer_id,
             current_period_start=datetime.fromtimestamp(subscription_data['current_period_start']),
@@ -424,12 +451,12 @@ def handle_checkout_completed(session):
     # Update Guild tier
     with GuildDao() as guild_dao:
         guild_dao.execute_query(
-            "UPDATE Guilds SET subscription_tier = 'premium', subscription_status = 'active' WHERE id = %s",
-            (int(guild_id),),
+            "UPDATE Guilds SET subscription_tier = %s, subscription_status = 'active' WHERE id = %s",
+            (tier, int(guild_id)),
             commit=True
         )
 
-    logger.info(f"Subscription created for guild {guild_id}")
+    logger.info(f"Subscription created for guild {guild_id} with tier {tier}")
 
 
 def handle_subscription_updated(subscription):
@@ -558,11 +585,14 @@ def handle_payment_succeeded(invoice):
         subscription_record = sub_dao.get_by_stripe_subscription_id(subscription_id)
 
         if subscription_record:
-            # Ensure guild has premium tier and active status
+            # Preserve existing tier when reactivating subscription
+            tier = subscription_record.tier if subscription_record.tier else 'premium'
+
+            # Ensure guild has correct tier and active status
             with GuildDao() as guild_dao:
                 guild_dao.execute_query(
-                    "UPDATE Guilds SET subscription_tier = 'premium', subscription_status = 'active' WHERE id = %s",
-                    (int(subscription_record.guild_id),),
+                    "UPDATE Guilds SET subscription_tier = %s, subscription_status = 'active' WHERE id = %s",
+                    (tier, int(subscription_record.guild_id)),
                     commit=True
                 )
 

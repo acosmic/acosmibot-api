@@ -136,6 +136,42 @@ def guild_config_hybrid(guild_id):
             async def fetch_guild_data():
                 settings = settings_manager.get_settings_dict(int(guild_id))
 
+                # Define default moderation settings
+                default_moderation_settings = {
+                    "enabled": False,
+                    "mod_log_channel_id": None,
+                    "member_activity_channel_id": None,
+                    "events": {
+                        "on_member_join": {"enabled": True, "color": "#00ff00", "message": "Welcome {user.mention} to the server!"},
+                        "on_member_remove": {"enabled": True, "color": "#ff0000", "message": "{user.name} has left the server."},
+                        "on_message_edit": {"enabled": True},
+                        "on_message_delete": {"enabled": True},
+                        "on_audit_log_entry": {
+                            "ban": {"enabled": True},
+                            "unban": {"enabled": True},
+                            "kick": {"enabled": True},
+                            "mute": {"enabled": True},
+                            "role_change": {"enabled": True}
+                        },
+                        "on_member_update": {
+                            "nickname_change": {"enabled": True}
+                        }
+                    }
+                }
+
+                # Merge with existing settings
+                if "moderation" in settings:
+                    # A simple dict update won't work for nested dicts, so we do it manually
+                    for key, value in default_moderation_settings.items():
+                        if key not in settings["moderation"]:
+                            settings["moderation"][key] = value
+                        elif isinstance(value, dict):
+                            for sub_key, sub_value in value.items():
+                                if sub_key not in settings["moderation"][key]:
+                                    settings["moderation"][key][sub_key] = sub_value
+                else:
+                    settings["moderation"] = default_moderation_settings
+
                 # Fetch Discord metadata for dropdowns
                 guild_info = await http_client.get_guild_info(guild_id)
                 all_channels = await http_client.get_guild_channels(guild_id)

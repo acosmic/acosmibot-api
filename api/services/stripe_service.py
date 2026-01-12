@@ -15,6 +15,7 @@ class StripeService:
 
     def __init__(self):
         self.premium_price_id = os.getenv('STRIPE_PREMIUM_PRICE_ID')
+        self.premium_plus_ai_price_id = os.getenv('STRIPE_PREMIUM_PLUS_AI_PRICE_ID')
 
         if not stripe.api_key:
             logger.error("STRIPE_SECRET_KEY not set in environment variables")
@@ -24,13 +25,18 @@ class StripeService:
             logger.error("STRIPE_PREMIUM_PRICE_ID not set in environment variables")
             raise ValueError("Stripe premium price ID not configured")
 
+        if not self.premium_plus_ai_price_id:
+            logger.error("STRIPE_PREMIUM_PLUS_AI_PRICE_ID not set in environment variables")
+            raise ValueError("Stripe premium plus AI price ID not configured")
+
     def create_checkout_session(
         self,
         guild_id: str,
         guild_name: str,
         user_id: str,
         success_url: str,
-        cancel_url: str
+        cancel_url: str,
+        tier: str = 'premium'
     ) -> Optional[Dict[str, Any]]:
         """
         Create a Stripe Checkout session for premium subscription
@@ -41,15 +47,22 @@ class StripeService:
             user_id: Discord user ID (who initiated checkout)
             success_url: URL to redirect after successful payment
             cancel_url: URL to redirect if payment is canceled
+            tier: Subscription tier ('premium' or 'premium_plus_ai', defaults to 'premium')
 
         Returns:
             Dictionary with checkout session details or None on error
         """
         try:
+            # Select the correct price ID based on tier
+            if tier == 'premium_plus_ai':
+                price_id = self.premium_plus_ai_price_id
+            else:
+                price_id = self.premium_price_id
+
             session = stripe.checkout.Session.create(
                 mode='subscription',
                 line_items=[{
-                    'price': self.premium_price_id,
+                    'price': price_id,
                     'quantity': 1
                 }],
                 success_url=success_url,
@@ -57,19 +70,21 @@ class StripeService:
                 metadata={
                     'guild_id': str(guild_id),
                     'user_id': str(user_id),
-                    'guild_name': guild_name
+                    'guild_name': guild_name,
+                    'tier': tier
                 },
                 subscription_data={
                     'metadata': {
                         'guild_id': str(guild_id),
-                        'guild_name': guild_name
+                        'guild_name': guild_name,
+                        'tier': tier
                     }
                 },
                 allow_promotion_codes=True,  # Allow promo codes
                 billing_address_collection='auto'
             )
 
-            logger.info(f"Created checkout session for guild {guild_id}: {session.id}")
+            logger.info(f"Created checkout session for guild {guild_id} (tier: {tier}): {session.id}")
 
             return {
                 'session_id': session.id,
