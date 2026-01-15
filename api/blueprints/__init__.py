@@ -14,6 +14,8 @@ from .subscriptions import subscriptions_bp
 from .custom_commands import custom_commands_bp
 from .youtube_webhooks import youtube_webhooks_bp
 from .ai_images import ai_images_bp
+from .kick import kick_bp
+from .kick_webhooks import kick_webhooks_bp
 
 __all__ = [
     'utilities_bp',
@@ -25,9 +27,11 @@ __all__ = [
     'admin_bp',
     'twitch_bp',
     'youtube_bp',
+    'kick_bp',
     'reaction_roles_bp',
     'subscriptions_bp',
     'custom_commands_bp',
     'ai_images_bp',
-    'youtube_webhooks_bp'
+    'youtube_webhooks_bp',
+    'kick_webhooks_bp'
 ]

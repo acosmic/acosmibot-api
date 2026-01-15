@@ -7,6 +7,7 @@ from api.services.dao_imports import GuildDao, GuildUserDao, ReactionRoleDao
 from api.services.discord_integration import check_admin_sync, get_channels_sync, http_client
 from api.services.twitch_subscription_manager import TwitchSubscriptionManager
 from api.services.youtube_subscription_manager import YouTubeSubscriptionManager
+from api.services.redis_client import publish_cache_invalidation
 from acosmibot.Services.youtube_service import YouTubeService
 import aiohttp
 import json
@@ -280,6 +281,9 @@ def guild_config_hybrid(guild_id):
 
         if not success:
             return jsonify({"success": False, "message": "Failed to update settings in database"}), 500
+
+        # ⚡ NEW: Publish cache invalidation to bot instances
+        publish_cache_invalidation(int(guild_id))
 
         return jsonify({
             "success": True,

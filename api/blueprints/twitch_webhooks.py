@@ -327,7 +327,7 @@ async def handle_stream_offline(event: dict, event_id: str):
        - Mark stream as offline
        - Calculate duration
        - Edit Discord message to show stream ended
-    4. VOD checking will be handled by unified_streaming_vod_checker.py
+    4. VOD checking will be handled by twitch_vod_checker_task.py
     """
     broadcaster_user_id = event.get('broadcaster_user_id')
     broadcaster_username = event.get('broadcaster_user_login')

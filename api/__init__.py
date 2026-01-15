@@ -93,7 +93,8 @@ def create_app(config_name='default'):
     from api.blueprints import (
         utilities_bp, auth_bp, guilds_bp, leaderboards_bp,
         users_bp, portal_bp, admin_bp, twitch_bp, youtube_bp,
-        reaction_roles_bp, subscriptions_bp, custom_commands_bp, ai_images_bp
+        reaction_roles_bp, subscriptions_bp, custom_commands_bp, ai_images_bp,
+        kick_bp, kick_webhooks_bp
     )
     from api.blueprints.twitch_webhooks import twitch_webhooks_bp
     from api.blueprints.youtube_webhooks import youtube_webhooks_bp
@@ -107,8 +108,10 @@ def create_app(config_name='default'):
     app.register_blueprint(admin_bp)
     app.register_blueprint(twitch_bp)
     app.register_blueprint(youtube_bp)
+    app.register_blueprint(kick_bp)
     app.register_blueprint(twitch_webhooks_bp)  # EventSub webhooks
     app.register_blueprint(youtube_webhooks_bp) # YouTube WebSub webhooks
+    app.register_blueprint(kick_webhooks_bp)    # Kick webhooks
     app.register_blueprint(reaction_roles_bp)
     app.register_blueprint(subscriptions_bp)
     app.register_blueprint(custom_commands_bp)
