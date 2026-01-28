@@ -43,9 +43,9 @@ def callback():
     # Create JWT
     jwt_token = oauth_service.create_jwt(user_info)
 
-    # Redirect to overview page on main website with token
-    user_overview_url = f"https://acosmibot.com/overview?token={jwt_token}"
-    return redirect(user_overview_url)
+    # Redirect to dashboard page on main website with token
+    user_dashboard_url = f"https://acosmibot.com/dashboard?token={jwt_token}"
+    return redirect(user_dashboard_url)
 
 
 @auth_bp.route('/me')

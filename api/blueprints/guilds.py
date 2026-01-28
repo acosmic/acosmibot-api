@@ -7,6 +7,7 @@ from api.services.dao_imports import GuildDao, GuildUserDao, ReactionRoleDao
 from api.services.discord_integration import check_admin_sync, get_channels_sync, http_client
 from api.services.twitch_subscription_manager import TwitchSubscriptionManager
 from api.services.youtube_subscription_manager import YouTubeSubscriptionManager
+from api.services.kick_subscription_manager import KickSubscriptionManager
 from api.services.redis_client import publish_cache_invalidation
 from acosmibot.Services.youtube_service import YouTubeService
 import aiohttp
@@ -120,6 +121,41 @@ def get_guild_permissions(guild_id):
     except Exception as e:
         logger.error(f"Error checking guild permissions: {e}", exc_info=True)
         return jsonify({"success": False, "message": "Internal server error", "error": str(e)}), 500
+
+@guilds_bp.route('/guilds/<guild_id>/channels', methods=['GET'])
+@require_auth
+def get_guild_channels(guild_id):
+    """Get text channels for a guild"""
+    try:
+        # Check if user has admin permissions
+        has_admin = run_async_threadsafe(http_client.check_admin(request.user_id, guild_id))
+        if not has_admin:
+            return jsonify({
+                "success": False,
+                "message": "You don't have permission to view this server's channels"
+            }), 403
+
+        async def fetch_channels():
+            all_channels = await http_client.get_guild_channels(guild_id)
+            # Filter to only text and announcement channels (type 0 and 5)
+            channels = [
+                ch for ch in all_channels
+                if ch.get('type') in [0, 5]  # Text and announcement channels
+            ]
+            return channels
+
+        channels = run_async_threadsafe(fetch_channels())
+        return jsonify({
+            "success": True,
+            "channels": channels
+        })
+    except Exception as e:
+        logger.error(f"Error fetching guild channels: {e}", exc_info=True)
+        return jsonify({
+            "success": False,
+            "message": "Failed to fetch channels",
+            "error": str(e)
+        }), 500
 
 @guilds_bp.route('/guilds/<guild_id>/config-hybrid', methods=['GET', 'POST'])
 @require_auth
@@ -276,6 +312,33 @@ def guild_config_hybrid(guild_id):
                                 logger.error(f"Could not resolve YouTube channel ID for username to remove subscription: {username}")
 
                 run_async_threadsafe(process_youtube_changes())
+
+        # Kick subscription logic
+        if 'kick' in settings and settings['kick'].get('enabled'):
+            current_kick_streamers = {s['username'].lower() for s in current_settings.get('kick', {}).get('tracked_streamers', [])}
+            new_kick_streamers = {s['username'].lower() for s in settings['kick'].get('tracked_streamers', [])}
+            added_kick = new_kick_streamers - current_kick_streamers
+            removed_kick = current_kick_streamers - new_kick_streamers
+
+            if added_kick or removed_kick:
+                kick_manager = KickSubscriptionManager()
+
+                async def process_kick_changes():
+                    for username in added_kick:
+                        success, message = await kick_manager.subscribe_to_streamer(username, int(guild_id))
+                        if not success:
+                            logger.error(f"Failed to subscribe to Kick streamer {username}: {message}")
+                        else:
+                            logger.info(f"Successfully subscribed to Kick streamer {username} for guild {guild_id}")
+
+                    for username in removed_kick:
+                        success, message = await kick_manager.unsubscribe_from_streamer(username, int(guild_id))
+                        if not success:
+                            logger.error(f"Failed to unsubscribe from Kick streamer {username}: {message}")
+                        else:
+                            logger.info(f"Successfully unsubscribed from Kick streamer {username} for guild {guild_id}")
+
+                run_async_threadsafe(process_kick_changes())
 
         success = settings_manager.update_settings_dict(guild_id, settings)
 

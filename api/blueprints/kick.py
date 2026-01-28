@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 @kick_bp.route('/validate-username', methods=['POST'])
 @require_auth
 def validate_kick_username():
-    """Validate that a Kick username exists"""
+    """Validate that a Kick username exists using Kick's official public API."""
     try:
         data = request.get_json()
         if not data or 'username' not in data:
@@ -28,7 +28,7 @@ def validate_kick_username():
                 "message": "Username cannot be empty"
             }), 400
 
-        # Import KickService and validate
+        # Import KickService
         from pathlib import Path
         current_dir = Path(__file__).parent.parent.parent
         bot_project_path = current_dir.parent / "acosmibot"
@@ -41,6 +41,7 @@ def validate_kick_username():
 
         async def check_username():
             kick = KickService()
+            # Simple session - no special headers or SSL needed for official API
             async with aiohttp.ClientSession() as session:
                 return await kick.validate_username(session, username)
 
@@ -88,6 +89,7 @@ def get_kick_channel(username):
 
         async def get_channel():
             kick = KickService()
+            # Simple session - no special headers or SSL needed for official API
             async with aiohttp.ClientSession() as session:
                 return await kick.get_channel_info(session, username)
 

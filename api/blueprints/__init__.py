@@ -16,6 +16,7 @@ from .youtube_webhooks import youtube_webhooks_bp
 from .ai_images import ai_images_bp
 from .kick import kick_bp
 from .kick_webhooks import kick_webhooks_bp
+from .embeds import embeds_bp
 
 __all__ = [
     'utilities_bp',
@@ -33,5 +34,6 @@ __all__ = [
     'custom_commands_bp',
     'ai_images_bp',
     'youtube_webhooks_bp',
-    'kick_webhooks_bp'
+    'kick_webhooks_bp',
+    'embeds_bp'
 ]
