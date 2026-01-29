@@ -101,17 +101,35 @@ def create_checkout():
             existing = sub_dao.get_by_guild_id(str(guild_id))
 
         if existing and existing.status == 'active':
-            # Allow upgrade from premium to premium_plus_ai
+            # Block duplicate subscriptions of the same tier
             if existing.tier == 'premium' and tier == 'premium':
                 return jsonify({
                     "success": False,
                     "message": "Guild already has an active premium subscription"
                 }), 400
-            elif existing.tier == 'premium_plus_ai':
+            elif existing.tier == 'premium_plus_ai' and tier == 'premium_plus_ai':
                 return jsonify({
                     "success": False,
                     "message": "Guild already has an active premium plus AI subscription"
                 }), 400
+
+            # Handle tier changes (upgrade or downgrade)
+            elif existing.tier != tier:
+                if existing.stripe_subscription_id:
+                    # Cancel the old subscription immediately when changing tiers
+                    action = "upgrade" if tier == 'premium_plus_ai' else "downgrade"
+                    logger.info(f"Canceling existing {existing.tier} subscription {existing.stripe_subscription_id} for {action} to {tier}")
+                    cancel_success = stripe_service.cancel_subscription(
+                        existing.stripe_subscription_id,
+                        immediately=True
+                    )
+                    if not cancel_success:
+                        logger.error(f"Failed to cancel existing {existing.tier} subscription during tier change")
+                        return jsonify({
+                            "success": False,
+                            "message": "Failed to cancel existing subscription. Please contact support."
+                        }), 500
+                    logger.info(f"Successfully canceled {existing.tier} subscription for {action} to {tier}")
 
         # Get guild info
         with GuildDao() as guild_dao:

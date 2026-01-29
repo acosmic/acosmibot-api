@@ -340,6 +340,39 @@ def guild_config_hybrid(guild_id):
 
                 run_async_threadsafe(process_kick_changes())
 
+        # AI settings validation
+        if 'ai' in settings:
+            # 1. Check tier requirement
+            guild_tier = PremiumChecker.get_guild_tier(int(guild_id))
+            if guild_tier != 'premium_plus_ai':
+                return jsonify({
+                    'success': False,
+                    'error': 'AI customization requires Premium + AI subscription',
+                    'upgrade_url': 'https://acosmibot.com/premium'
+                }), 403
+
+            # 2. Validate model access
+            selected_model = settings['ai'].get('model', 'gpt-4o-mini')
+            # For now, all models are available to premium_plus_ai tier
+            # This can be extended later if different tiers have different model access
+
+            # 3. Validate instructions length
+            instructions = settings['ai'].get('instructions', '')
+            if len(instructions) > 2000:
+                return jsonify({
+                    'success': False,
+                    'error': 'Instructions must be under 2000 characters'
+                }), 400
+
+            # 4. Validate channel arrays
+            allowed = settings['ai'].get('allowed_channels', [])
+            excluded = settings['ai'].get('excluded_channels', [])
+            if not isinstance(allowed, list) or not isinstance(excluded, list):
+                return jsonify({
+                    'success': False,
+                    'error': 'Channel arrays must be lists'
+                }), 400
+
         success = settings_manager.update_settings_dict(guild_id, settings)
 
         if not success:
