@@ -455,16 +455,50 @@ def handle_checkout_completed(session):
         logger.error(f"Failed to get subscription details for {subscription_id}")
         return
 
-    # Create subscription record
+    # Create or update subscription record
     with SubscriptionDao() as sub_dao:
-        sub_dao.create_subscription(
-            guild_id=guild_id,
-            tier=tier,
-            stripe_subscription_id=subscription_id,
-            stripe_customer_id=customer_id,
-            current_period_start=datetime.fromtimestamp(subscription_data['current_period_start']),
-            current_period_end=datetime.fromtimestamp(subscription_data['current_period_end'])
-        )
+        # Check if subscription already exists for this guild
+        existing_sub = sub_dao.get_by_guild_id(guild_id)
+
+        if existing_sub:
+            # Update existing subscription with all fields including Stripe IDs
+            logger.info(f"Updating existing subscription for guild {guild_id} to tier {tier}")
+            update_query = """
+                UPDATE Subscriptions
+                SET tier = %s,
+                    status = 'active',
+                    stripe_subscription_id = %s,
+                    stripe_customer_id = %s,
+                    current_period_start = %s,
+                    current_period_end = %s,
+                    cancel_at_period_end = 0,
+                    cancel_at = NULL,
+                    updated_at = NOW()
+                WHERE guild_id = %s
+            """
+            sub_dao.execute_query(
+                update_query,
+                (
+                    tier,
+                    subscription_id,
+                    customer_id,
+                    datetime.fromtimestamp(subscription_data['current_period_start']),
+                    datetime.fromtimestamp(subscription_data['current_period_end']),
+                    str(guild_id)
+                ),
+                commit=True
+            )
+        else:
+            # Create new subscription
+            logger.info(f"Creating new subscription for guild {guild_id} with tier {tier}")
+            sub_dao.create_subscription(
+                guild_id=guild_id,
+                tier=tier,
+                stripe_subscription_id=subscription_id,
+                stripe_customer_id=customer_id,
+                current_period_start=datetime.fromtimestamp(subscription_data['current_period_start']),
+                current_period_end=datetime.fromtimestamp(subscription_data['current_period_end'])
+            )
 
     # Update Guild tier
     with GuildDao() as guild_dao:
@@ -474,7 +508,7 @@ def handle_checkout_completed(session):
             commit=True
         )
 
-    logger.info(f"Subscription created for guild {guild_id} with tier {tier}")
+    logger.info(f"Subscription {'updated' if existing_sub else 'created'} for guild {guild_id} with tier {tier}")
 
 
 def handle_subscription_updated(subscription):
