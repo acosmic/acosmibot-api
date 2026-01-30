@@ -8,12 +8,10 @@ import os
 
 utilities_bp = Blueprint('utilities', __name__)
 
-
 @utilities_bp.route('/')
 def hello():
     """Basic health check endpoint"""
     return jsonify({'message': 'Acosmibot API is working!'})
-
 
 @utilities_bp.route('/test-import')
 def test_import():
@@ -32,7 +30,6 @@ def test_import():
             'message': f'Import failed: {str(e)}'
         }), 500
 
-
 @utilities_bp.route('/test-db')
 def test_db():
     """Test database connection"""
@@ -49,7 +46,6 @@ def test_db():
             'message': f'Database error: {str(e)}'
         }), 500
 
-
 @utilities_bp.route('/api/endpoints')
 def list_endpoints():
     """List all available API endpoints"""
@@ -64,7 +60,6 @@ def list_endpoints():
             })
     return jsonify(endpoints)
 
-
 @utilities_bp.route('/bot/invite')
 def get_bot_invite():
     """Bot invite coming soon message"""
@@ -74,7 +69,6 @@ def get_bot_invite():
         'eta': 'We are actively developing the bot. Public invites will be available soon.',
         'contact': 'Contact Acosmic on Discord for more info!'
     })
-
 
 @utilities_bp.route('/api/debug/guilds', methods=['GET'])
 def debug_guilds():
@@ -92,7 +86,6 @@ def debug_guilds():
             "success": False,
             "error": str(e)
         }), 500
-
 
 @utilities_bp.route('/test/create-token/<int:user_id>')
 def create_test_token(user_id):
@@ -126,7 +119,6 @@ def create_test_token(user_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-
 @utilities_bp.route('/test/validate-token')
 def validate_test_token():
     """Test token validation"""
@@ -149,7 +141,6 @@ def validate_test_token():
         return jsonify({'error': 'Token expired', 'valid': False}), 401
     except jwt.InvalidTokenError:
         return jsonify({'error': 'Invalid token', 'valid': False}), 401
-
 
 @utilities_bp.route('/api/simple-test/<guild_id>', methods=['GET'])
 @require_auth

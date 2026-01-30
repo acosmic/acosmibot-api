@@ -4,7 +4,6 @@ from flask import request, jsonify
 import jwt
 import os
 
-
 def require_auth(f):
     """JWT authentication decorator"""
     @wraps(f)

@@ -8,19 +8,12 @@ import logging
 import sys
 from pathlib import Path
 from typing import Optional, Tuple
-
-# Ensure bot path is in sys.path
-current_dir = Path(__file__).parent.parent.parent
-bot_project_path = current_dir.parent / "acosmibot"
-if str(bot_project_path) not in sys.path:
-    sys.path.insert(0, str(bot_project_path))
-
 from api.services.twitch_eventsub_service import TwitchEventSubService
-from Dao.TwitchEventSubDao import TwitchEventSubDao
-from Services.twitch_service import TwitchService
+from acosmibot_core.dao import TwitchEventSubDao
+
+from acosmibot_core.services import TwitchService
 
 logger = logging.getLogger(__name__)
-
 
 class TwitchSubscriptionManager:
     """Manages EventSub subscriptions with reference counting"""
@@ -178,7 +171,7 @@ class TwitchSubscriptionManager:
         Returns:
             Stats dict with counts
         """
-        from Dao.GuildDao import GuildDao
+        from acosmibot_core.dao import GuildDao
 
         stats = {
             'total_streamers': 0,
@@ -256,7 +249,6 @@ class TwitchSubscriptionManager:
             logger.error(f"Error in bulk subscription: {e}", exc_info=True)
             stats['errors'].append(f"Bulk subscription error: {str(e)}")
             return stats
-
 
 # Synchronous wrapper for Flask routes
 def run_async(coro):

@@ -5,7 +5,6 @@ from api.services.dao_imports import UserDao, GuildUserDao, GuildDao
 
 leaderboards_bp = Blueprint('leaderboards', __name__, url_prefix='/api')
 
-
 # ============================================================================
 # GLOBAL LEADERBOARDS
 # ============================================================================
@@ -22,7 +21,6 @@ def get_currency_leaderboard():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-
 @leaderboards_bp.route('/leaderboard/messages')
 def get_messages_leaderboard():
     """Get global messages leaderboard"""
@@ -35,7 +33,6 @@ def get_messages_leaderboard():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-
 @leaderboards_bp.route('/leaderboard/level')
 def get_level_leaderboard():
     """Get global level leaderboard"""
@@ -47,7 +44,6 @@ def get_level_leaderboard():
         return jsonify(top_users)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
 
 # ============================================================================
 # GUILD-SPECIFIC LEADERBOARDS
@@ -83,7 +79,6 @@ def get_guild_level_leaderboard(guild_id):
             "error": str(e)
         }), 500
 
-
 @leaderboards_bp.route('/guilds/<guild_id>/leaderboard/messages', methods=['GET'])
 @require_auth
 def get_guild_messages_leaderboard(guild_id):
@@ -113,7 +108,6 @@ def get_guild_messages_leaderboard(guild_id):
             "message": "Failed to get leaderboard",
             "error": str(e)
         }), 500
-
 
 @leaderboards_bp.route('/guilds/<guild_id>/leaderboard/messages-db', methods=['GET'])
 @require_auth

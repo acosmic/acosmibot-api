@@ -1,13 +1,13 @@
 """Twitch integration endpoints"""
 from flask import Blueprint, jsonify, request
 from api.middleware.auth_decorators import require_auth
-import sys
-import os
 import logging
+import asyncio
+import aiohttp
+from acosmibot_core.services import TwitchService
 
 twitch_bp = Blueprint('twitch', __name__, url_prefix='/api/twitch')
 logger = logging.getLogger(__name__)
-
 
 @twitch_bp.route('/validate-username', methods=['POST'])
 @require_auth
@@ -27,18 +27,6 @@ def validate_twitch_username():
                 "success": False,
                 "message": "Username cannot be empty"
             }), 400
-
-        # Import TwitchService and validate
-        from pathlib import Path
-        # Add acosmibot directory to path
-        current_dir = Path(__file__).parent.parent.parent
-        bot_project_path = current_dir.parent / "acosmibot"
-        if str(bot_project_path) not in sys.path:
-            sys.path.insert(0, str(bot_project_path))
-
-        from Services.twitch_service import TwitchService
-        import asyncio
-        import aiohttp
 
         async def check_username():
             tw = TwitchService()

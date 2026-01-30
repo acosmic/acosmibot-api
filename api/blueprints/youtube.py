@@ -10,15 +10,9 @@ import aiohttp
 from flask import Blueprint, request, jsonify
 from functools import wraps
 import logging
-
-# Import bot services
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..')))
-from acosmibot.Services.youtube_service import YouTubeService
-
 logger = logging.getLogger(__name__)
 
 youtube_bp = Blueprint('youtube', __name__, url_prefix='/api/youtube')
-
 
 def require_auth(f):
     """Decorator to require authentication"""
@@ -28,7 +22,6 @@ def require_auth(f):
         # For now, allow all requests (can be secured later)
         return f(*args, **kwargs)
     return decorated_function
-
 
 @youtube_bp.route('/validate-channel', methods=['POST'])
 @require_auth
@@ -89,7 +82,6 @@ def validate_channel():
             'error': 'Internal server error'
         }), 500
 
-
 async def _validate_channel_async(identifier):
     """Async helper to validate YouTube channel"""
     yt = YouTubeService()
@@ -130,7 +122,6 @@ async def _validate_channel_async(identifier):
                 'video_count': channel_info['video_count']
             }
         }
-
 
 @youtube_bp.route('/check-live', methods=['POST'])
 @require_auth
@@ -189,7 +180,6 @@ def check_live():
             'success': False,
             'error': 'Internal server error'
         }), 500
-
 
 async def _check_live_async(channel_id):
     """Async helper to check if channel is live"""

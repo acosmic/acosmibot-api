@@ -10,18 +10,11 @@ from api.services.dao_imports import (
     AdminUserDao, GlobalSettingsDao, AuditLogDao,
     GuildDao, UserDao
 )
-
-# Ensure bot path is in sys.path for models import
-current_dir = Path(__file__).parent.parent.parent
-bot_project_path = current_dir.parent / "acosmibot"
-if str(bot_project_path) not in sys.path:
-    sys.path.insert(0, str(bot_project_path))
-
-from models.settings_manager import SettingsManager
+import sys
+from acosmibot_core.models import SettingsManager
 
 admin_bp = Blueprint('admin', __name__, url_prefix='/api/admin')
 logger = logging.getLogger(__name__)
-
 
 @admin_bp.route('/check', methods=['GET'])
 @require_auth

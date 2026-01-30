@@ -5,7 +5,6 @@ from api.services.dao_imports import UserDao, GuildUserDao, GamesDao
 
 users_bp = Blueprint('users', __name__, url_prefix='/api')
 
-
 @users_bp.route('/user/<int:user_id>')
 def get_user_info(user_id):
     try:
@@ -47,7 +46,6 @@ def get_user_info(user_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-
 @users_bp.route('/user/<int:user_id>/rank/currency')
 def get_user_currency_rank(user_id):
     try:
@@ -62,7 +60,6 @@ def get_user_currency_rank(user_id):
             return jsonify({'error': 'User not found'}), 404
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
 
 @users_bp.route('/user/<int:user_id>/rank/exp')
 def get_user_exp_rank(user_id):
@@ -79,7 +76,6 @@ def get_user_exp_rank(user_id):
             return jsonify({'error': 'User not found'}), 404
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
 
 @users_bp.route('/user/<int:user_id>/games')
 def get_user_game_stats(user_id):
@@ -141,7 +137,6 @@ def get_user_game_stats(user_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-
 @users_bp.route('/stats/global')
 def get_global_stats():
     try:
@@ -157,7 +152,6 @@ def get_global_stats():
         return jsonify(stats)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
 
 @users_bp.route('/user/<int:user_id>/guilds')
 def get_user_guilds_simple(user_id):
@@ -192,7 +186,6 @@ def get_user_guilds_simple(user_id):
             })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
 
 @users_bp.route('/guilds/<guild_id>/user/<int:user_id>/stats', methods=['GET'])
 @require_auth

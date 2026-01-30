@@ -10,26 +10,19 @@ import json
 import asyncio
 import aiohttp
 from datetime import datetime
-
-# Ensure bot path is in sys.path
-current_dir = Path(__file__).parent.parent.parent
-bot_project_path = current_dir.parent / "acosmibot"
-if str(bot_project_path) not in sys.path:
-    sys.path.insert(0, str(bot_project_path))
-
 from api.services.twitch_eventsub_service import TwitchEventSubService
 from api.services.discord_integration import http_client
-from Dao.TwitchWebhookEventDao import TwitchWebhookEventDao
-from Dao.TwitchEventSubDao import TwitchEventSubDao
-from Dao.TwitchAnnouncementDao import TwitchAnnouncementDao
-from Dao.GuildDao import GuildDao
-from Services.twitch_service import TwitchService
+from acosmibot_core.dao import TwitchWebhookEventDao
+from acosmibot_core.dao import TwitchEventSubDao
+from acosmibot_core.dao import TwitchAnnouncementDao
+from acosmibot_core.dao import GuildDao
+
+from acosmibot_core.services import TwitchService
 
 logger = logging.getLogger(__name__)
 twitch_webhooks_bp = Blueprint('twitch_webhooks', __name__, url_prefix='/api/webhooks')
 
 eventsub_service = TwitchEventSubService()
-
 
 @twitch_webhooks_bp.route('/twitch', methods=['POST'])
 def twitch_eventsub_webhook():
@@ -138,7 +131,6 @@ def twitch_eventsub_webhook():
     else:
         logger.warning(f"Unknown message type: {message_type}")
         return jsonify({"error": "Unknown message type"}), 400
-
 
 async def handle_stream_online(event: dict, event_id: str):
     """
@@ -315,7 +307,6 @@ async def handle_stream_online(event: dict, event_id: str):
     event_dao.mark_event_processed(event_id)
     event_dao.close()
 
-
 async def handle_stream_offline(event: dict, event_id: str):
     """
     Handle stream.offline event
@@ -405,7 +396,6 @@ async def handle_stream_offline(event: dict, event_id: str):
     event_dao.mark_event_processed(event_id)
     event_dao.close()
 
-
 async def edit_announcement_on_stream_end(announcement, stream_end_time: datetime, duration_seconds: int):
     """Edit Discord announcement message when stream ends"""
     try:
@@ -477,7 +467,6 @@ async def edit_announcement_on_stream_end(announcement, stream_end_time: datetim
     except Exception as e:
         logger.error(f"Error editing announcement {announcement.id}: {e}", exc_info=True)
 
-
 def build_announcement_content(streamer_config: dict, username: str, game_name: str, stream_title: str, viewer_count: int) -> str:
     """Build announcement message content with mentions"""
     mention_parts = []
@@ -509,7 +498,6 @@ def build_announcement_content(streamer_config: dict, username: str, game_name: 
         content_parts.append(custom_message)
 
     return " ".join(content_parts) if content_parts else ""
-
 
 def format_duration(seconds: int) -> str:
     """Format duration in seconds to human-readable format"""

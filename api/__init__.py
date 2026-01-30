@@ -1,16 +1,11 @@
 """Application factory for Flask API"""
 import os
-import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
 # --- Path Setup ---
-# Add project root to sys.path to allow importing 'acosmibot' module
-project_root = Path(__file__).parent.parent.parent
-if str(project_root) not in sys.path:
-    sys.path.insert(0, str(project_root))
-
 # Load environment variables from the correct .env file
+project_root = Path(__file__).parent.parent.parent
 dotenv_path = project_root / 'acosmibot' / '.env'
 load_dotenv(dotenv_path=dotenv_path)
 

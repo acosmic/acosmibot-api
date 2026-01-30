@@ -10,7 +10,6 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-
 class TwitchEventSubService:
     """Manages Twitch EventSub subscriptions via API"""
 

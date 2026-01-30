@@ -10,7 +10,6 @@ from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
-
 class KickWebhookService:
     """Manages Kick webhook subscriptions via API"""
 

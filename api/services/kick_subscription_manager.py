@@ -5,22 +5,12 @@ Handles creating/deleting webhook subscriptions with reference counting
 import asyncio
 import aiohttp
 import logging
-import sys
-from pathlib import Path
 from typing import Optional, Tuple
-
-# Ensure bot path is in sys.path
-current_dir = Path(__file__).parent.parent.parent
-bot_project_path = current_dir.parent / "acosmibot"
-if str(bot_project_path) not in sys.path:
-    sys.path.insert(0, str(bot_project_path))
-
-from Dao.KickSubscriptionDao import KickSubscriptionDao
-from Services.kick_service import KickService
+from acosmibot_core.dao import KickSubscriptionDao
+from acosmibot_core.services import KickService
 from api.services.kick_webhook_service import KickWebhookService
 
 logger = logging.getLogger(__name__)
-
 
 class KickSubscriptionManager:
     """Manages Kick webhook subscriptions with reference counting"""

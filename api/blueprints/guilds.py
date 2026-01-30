@@ -1,6 +1,4 @@
 """Guild management endpoints - config, permissions, stats"""
-import sys
-from pathlib import Path
 from flask import Blueprint, jsonify, request, current_app
 from api.middleware.auth_decorators import require_auth
 from api.services.dao_imports import GuildDao, GuildUserDao, ReactionRoleDao
@@ -9,15 +7,15 @@ from api.services.twitch_subscription_manager import TwitchSubscriptionManager
 from api.services.youtube_subscription_manager import YouTubeSubscriptionManager
 from api.services.kick_subscription_manager import KickSubscriptionManager
 from api.services.redis_client import publish_cache_invalidation
-from acosmibot.Services.youtube_service import YouTubeService
+from acosmibot_core.services import YouTubeService
 import aiohttp
 import json
 from datetime import datetime
 import logging
 import asyncio
 
-from acosmibot.models.settings_manager import SettingsManager
-from acosmibot.utils.premium_checker import PremiumChecker
+from acosmibot_core.models import SettingsManager
+from acosmibot_core.utils import PremiumChecker
 from api import run_async_threadsafe
 
 logger = logging.getLogger(__name__)
@@ -390,7 +388,6 @@ def guild_config_hybrid(guild_id):
     except Exception as e:
         logger.error(f"Error updating guild config: {e}", exc_info=True)
         return jsonify({"success": False, "message": "Internal server error", "error": str(e)}), 500
-
 
 @guilds_bp.route('/guilds/<guild_id>/stats-db', methods=['GET'])
 @require_auth

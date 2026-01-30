@@ -8,13 +8,11 @@ import os
 auth_bp = Blueprint('auth', __name__, url_prefix='/auth')
 oauth_service = DiscordOAuthService()
 
-
 @auth_bp.route('/login')
 def login():
     """Initiate Discord OAuth flow"""
     auth_url = oauth_service.get_auth_url()
     return redirect(auth_url)
-
 
 @auth_bp.route('/callback')
 def callback():
@@ -46,7 +44,6 @@ def callback():
     # Redirect to dashboard page on main website with token
     user_dashboard_url = f"https://acosmibot.com/dashboard?token={jwt_token}"
     return redirect(user_dashboard_url)
-
 
 @auth_bp.route('/me')
 def get_current_user():

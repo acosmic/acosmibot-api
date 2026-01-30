@@ -8,7 +8,6 @@ import logging
 kick_bp = Blueprint('kick', __name__, url_prefix='/api/kick')
 logger = logging.getLogger(__name__)
 
-
 @kick_bp.route('/validate-username', methods=['POST'])
 @require_auth
 def validate_kick_username():
@@ -27,15 +26,7 @@ def validate_kick_username():
                 "success": False,
                 "message": "Username cannot be empty"
             }), 400
-
-        # Import KickService
-        from pathlib import Path
-        current_dir = Path(__file__).parent.parent.parent
-        bot_project_path = current_dir.parent / "acosmibot"
-        if str(bot_project_path) not in sys.path:
-            sys.path.insert(0, str(bot_project_path))
-
-        from Services.kick_service import KickService
+        from acosmibot_core.services import KickService
         import asyncio
         import aiohttp
 
@@ -71,19 +62,12 @@ def validate_kick_username():
             "error": str(e)
         }), 500
 
-
 @kick_bp.route('/channel/<username>', methods=['GET'])
 @require_auth
 def get_kick_channel(username):
     """Get Kick channel information"""
     try:
-        from pathlib import Path
-        current_dir = Path(__file__).parent.parent.parent
-        bot_project_path = current_dir.parent / "acosmibot"
-        if str(bot_project_path) not in sys.path:
-            sys.path.insert(0, str(bot_project_path))
-
-        from Services.kick_service import KickService
+        from acosmibot_core.services import KickService
         import asyncio
         import aiohttp
 

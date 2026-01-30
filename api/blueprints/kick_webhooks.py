@@ -13,23 +13,15 @@ from datetime import datetime
 import hashlib
 import hmac
 import os
-
-# Ensure bot path is in sys.path
-current_dir = Path(__file__).parent.parent.parent
-bot_project_path = current_dir.parent / "acosmibot"
-if str(bot_project_path) not in sys.path:
-    sys.path.insert(0, str(bot_project_path))
-
 from api.services.discord_integration import http_client
-from Dao.KickWebhookEventDao import KickWebhookEventDao
-from Dao.KickSubscriptionDao import KickSubscriptionDao
-from Dao.KickAnnouncementDao import KickAnnouncementDao
-from Dao.GuildDao import GuildDao
-from Services.kick_service import KickService
+from acosmibot_core.dao import KickWebhookEventDao
+from acosmibot_core.dao import KickSubscriptionDao
+from acosmibot_core.dao import KickAnnouncementDao
+from acosmibot_core.dao import GuildDao
+from acosmibot_core.services import KickService
 
 logger = logging.getLogger(__name__)
 kick_webhooks_bp = Blueprint('kick_webhooks', __name__, url_prefix='/api/webhooks')
-
 
 def verify_kick_signature(
     message_id: str,
@@ -66,7 +58,6 @@ def verify_kick_signature(
     except Exception as e:
         logger.error(f"Kick signature verification failed: {e}")
         return False
-
 
 @kick_webhooks_bp.route('/kick', methods=['POST'])
 def kick_webhook():
@@ -156,7 +147,6 @@ def kick_webhook():
 
     return jsonify({"success": True}), 200
 
-
 async def handle_livestream_status_updated(payload: dict, event_id: str):
     """
     Handle livestream.status.updated event
@@ -189,7 +179,6 @@ async def handle_livestream_status_updated(payload: dict, event_id: str):
                                    broadcaster_display_name, event_id)
     else:
         await handle_stream_offline(payload, broadcaster_user_id, broadcaster_username, event_id)
-
 
 async def handle_stream_online(payload, broadcaster_user_id, broadcaster_username,
                                 broadcaster_display_name, event_id):
@@ -390,7 +379,6 @@ async def handle_stream_online(payload, broadcaster_user_id, broadcaster_usernam
     event_dao.mark_event_processed(event_id)
     event_dao.close()
 
-
 async def handle_stream_offline(payload, broadcaster_user_id, broadcaster_username, event_id):
     """Handle stream going offline - update announcements"""
     logger.info(f"Processing Kick stream.offline for {broadcaster_username} ({broadcaster_user_id})")
@@ -458,7 +446,6 @@ async def handle_stream_offline(payload, broadcaster_user_id, broadcaster_userna
     event_dao.mark_event_processed(event_id)
     event_dao.close()
 
-
 async def edit_announcement_on_stream_end(channel_id, message_id, stream_started_at, stream_end_time, duration_seconds):
     """Edit Discord announcement message when stream ends"""
     try:
@@ -525,7 +512,6 @@ async def edit_announcement_on_stream_end(channel_id, message_id, stream_started
     except Exception as e:
         logger.error(f"Error editing Kick announcement on stream end: {e}", exc_info=True)
 
-
 def build_announcement_content(streamer_config: dict, username: str, category_name: str, stream_title: str, viewer_count: int) -> str:
     """Build announcement message content with mentions"""
     mention_parts = []
@@ -557,7 +543,6 @@ def build_announcement_content(streamer_config: dict, username: str, category_na
         content_parts.append(custom_message)
 
     return " ".join(content_parts) if content_parts else ""
-
 
 def format_duration(seconds: int) -> str:
     """Format duration in seconds to human-readable format"""

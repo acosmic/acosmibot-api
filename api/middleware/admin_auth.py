@@ -4,24 +4,13 @@ Admin Authentication & Authorization Middleware
 Decorators for protecting admin-only API routes
 """
 
-import sys
 import os
 from functools import wraps
 from flask import request, jsonify
-from pathlib import Path
-
-# Add bot project to path
-current_dir = Path(__file__).parent.parent.parent
-bot_project_path = current_dir.parent / "acosmibot"
-if str(bot_project_path) not in sys.path:
-    sys.path.insert(0, str(bot_project_path))
-
-from Dao.AdminUserDao import AdminUserDao
-from Dao.AuditLogDao import AuditLogDao
-from logger import AppLogger
+from acosmibot_core.dao import AdminUserDao, AuditLogDao
+from acosmibot_core.utils import AppLogger
 
 logger = AppLogger(__name__).get_logger()
-
 
 def require_admin(f):
     """
@@ -67,7 +56,6 @@ def require_admin(f):
 
     return decorated_function
 
-
 def require_super_admin(f):
     """
     Decorator to require super admin authentication for a route
@@ -109,7 +97,6 @@ def require_super_admin(f):
         return f(*args, **kwargs)
 
     return decorated_function
-
 
 def log_admin_action(action_type: str, target_type: str = None, target_id: str = None, changes: dict = None):
     """
@@ -157,7 +144,6 @@ def log_admin_action(action_type: str, target_type: str = None, target_id: str =
     except Exception as e:
         logger.error(f"Error logging admin action: {e}")
 
-
 def check_is_admin(discord_id: str) -> bool:
     """
     Helper function to check if a Discord user is an admin
@@ -175,7 +161,6 @@ def check_is_admin(discord_id: str) -> bool:
     except Exception as e:
         logger.error(f"Error checking admin status: {e}")
         return False
-
 
 def check_is_super_admin(discord_id: str) -> bool:
     """

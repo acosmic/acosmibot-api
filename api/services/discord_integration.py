@@ -8,7 +8,6 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-
 class SimpleDiscordHTTPClient:
     def __init__(self):
         self.bot_token = os.getenv('DISCORD_BOT_TOKEN')
@@ -229,6 +228,24 @@ class SimpleDiscordHTTPClient:
                 logger.error(f"Error adding reaction: {e}")
                 return False
 
+    async def delete_message(self, channel_id: int, message_id: int):
+        """Delete a message from a Discord channel"""
+        async with aiohttp.ClientSession() as session:
+            try:
+                url = f"{self.base_url}/channels/{channel_id}/messages/{message_id}"
+                async with session.delete(url, headers=self.headers) as response:
+                    if response.status == 204:
+                        logger.debug(f"Successfully deleted message {message_id} from channel {channel_id}")
+                        return True
+                    else:
+                        logger.error(f"Failed to delete message {message_id}: {response.status}")
+                        error_text = await response.text()
+                        logger.error(f"Response: {error_text}")
+                        return False
+            except Exception as e:
+                logger.error(f"Error deleting message: {e}")
+                return False
+
     async def get_channels(self, guild_id: str):
         """Get text and announcement channels for guild"""
         try:
@@ -276,10 +293,8 @@ class SimpleDiscordHTTPClient:
             traceback.print_exc()
             return []
 
-
 # Global client instance
 http_client = SimpleDiscordHTTPClient()
-
 
 def run_sync(coro):
     """Run async function synchronously"""
@@ -290,14 +305,11 @@ def run_sync(coro):
     finally:
         loop.close()
 
-
 def check_admin_sync(user_id: str, guild_id: str):
     return run_sync(http_client.check_admin(user_id, guild_id))
 
-
 def get_channels_sync(guild_id: str):
     return run_sync(http_client.get_channels(guild_id))
-
 
 def list_guilds_sync():
     return run_sync(http_client.list_all_guilds())

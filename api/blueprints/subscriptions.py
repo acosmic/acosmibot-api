@@ -9,14 +9,7 @@ from api.middleware.auth_decorators import require_auth
 from api.services.dao_imports import GuildDao
 from api.services.discord_integration import check_admin_sync
 from api.services.stripe_service import StripeService
-
-# Ensure bot path is in sys.path for DAO imports
-current_dir = Path(__file__).parent.parent.parent
-bot_project_path = current_dir.parent / "acosmibot"
-if str(bot_project_path) not in sys.path:
-    sys.path.insert(0, str(bot_project_path))
-
-from Dao.SubscriptionDao import SubscriptionDao
+from acosmibot_core.dao import SubscriptionDao
 
 logger = logging.getLogger(__name__)
 subscriptions_bp = Blueprint('subscriptions', __name__, url_prefix='/api')
@@ -24,7 +17,6 @@ subscriptions_bp = Blueprint('subscriptions', __name__, url_prefix='/api')
 # Initialize Stripe service
 stripe_service = StripeService()
 WEBHOOK_SECRET = os.getenv('STRIPE_WEBHOOK_SECRET')
-
 
 @subscriptions_bp.route('/guilds/<guild_id>/subscription', methods=['GET'])
 @require_auth
@@ -64,7 +56,6 @@ def get_subscription(guild_id):
             "message": "Internal server error",
             "error": str(e)
         }), 500
-
 
 @subscriptions_bp.route('/subscriptions/create-checkout', methods=['POST'])
 @require_auth
@@ -175,7 +166,6 @@ def create_checkout():
             "error": str(e)
         }), 500
 
-
 @subscriptions_bp.route('/subscriptions/cancel', methods=['POST'])
 @require_auth
 def cancel_subscription():
@@ -244,7 +234,6 @@ def cancel_subscription():
             "error": str(e)
         }), 500
 
-
 @subscriptions_bp.route('/subscriptions/portal', methods=['POST'])
 @require_auth
 def customer_portal():
@@ -305,7 +294,6 @@ def customer_portal():
             "message": "Internal server error",
             "error": str(e)
         }), 500
-
 
 @subscriptions_bp.route('/subscriptions/test-upgrade', methods=['POST'])
 @require_auth
@@ -370,7 +358,6 @@ def test_upgrade_guild():
             "error": str(e)
         }), 500
 
-
 @subscriptions_bp.route('/stripe/webhook', methods=['POST'])
 def stripe_webhook():
     """
@@ -428,7 +415,6 @@ def stripe_webhook():
         logger.error(f"Traceback: {traceback.format_exc()}")
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
-
 
 def handle_checkout_completed(session):
     """Handle successful checkout completion"""
@@ -510,7 +496,6 @@ def handle_checkout_completed(session):
 
     logger.info(f"Subscription {'updated' if existing_sub else 'created'} for guild {guild_id} with tier {tier}")
 
-
 def handle_subscription_updated(subscription):
     """Handle subscription update events"""
     logger.info(f"Subscription updated: {subscription['id']}")
@@ -559,7 +544,6 @@ def handle_subscription_updated(subscription):
 
     logger.info(f"Subscription {subscription_id} updated to status: {status}")
 
-
 def handle_subscription_deleted(subscription):
     """Handle subscription deletion/cancellation"""
     logger.info(f"Subscription deleted: {subscription['id']}")
@@ -586,7 +570,6 @@ def handle_subscription_deleted(subscription):
                 )
 
             logger.info(f"Guild {subscription_record.guild_id} downgraded to free tier")
-
 
 def handle_payment_failed(invoice):
     """Handle failed payment"""
@@ -616,7 +599,6 @@ def handle_payment_failed(invoice):
                 )
 
     logger.info(f"Subscription {subscription_id} marked as past_due")
-
 
 def handle_payment_succeeded(invoice):
     """Handle successful payment"""

@@ -1,19 +1,11 @@
 import asyncio
 from typing import List, Optional
-import sys
-from pathlib import Path
 import os
 import aiohttp
-
-# Add project root to sys.path to allow importing 'acosmibot' module
-project_root = Path(__file__).parent.parent.parent.parent
-if str(project_root) not in sys.path:
-    sys.path.insert(0, str(project_root))
-
 from api import get_db_session
-from acosmibot.Dao.YoutubeDao import YoutubeDao
+from acosmibot_core.dao import YoutubeDao
 from api.services.youtube_websub_service import YouTubeWebSubService
-from acosmibot.Services.youtube_service import YouTubeService
+from acosmibot_core.services import YouTubeService
 import logging
 logger = logging.getLogger(__name__)
 

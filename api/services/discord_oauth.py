@@ -4,7 +4,6 @@ import jwt
 from datetime import datetime, timedelta
 from flask import session
 
-
 class DiscordOAuthService:
     def __init__(self):
         self.client_id = os.getenv('DISCORD_CLIENT_ID')

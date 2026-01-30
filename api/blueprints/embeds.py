@@ -14,15 +14,10 @@ from flask import Blueprint, request, jsonify
 from werkzeug.utils import secure_filename
 from api.middleware.auth_decorators import require_auth
 from api.services.discord_integration import check_admin_sync, http_client, run_sync
-
-# Add bot directory to path to import DAOs
-bot_dir = Path(__file__).parent.parent.parent.parent / 'acosmibot'
-if str(bot_dir) not in sys.path:
-    sys.path.insert(0, str(bot_dir))
-
-from Dao.EmbedDao import EmbedDao
-from utils.premium_checker import PremiumChecker
-from models.embed_manager import (
+from acosmibot_core.dao import EmbedDao
+import sys
+from acosmibot_core.utils import PremiumChecker
+from acosmibot_core.models import (
     validate_embed_config,
     validate_button_config,
     build_embed_from_config,
@@ -40,7 +35,6 @@ CDN_BASE_URL = 'https://cdn.acosmibot.com/embed-images'
 ALLOWED_MIME_TYPES = {'image/png', 'image/jpeg', 'image/gif', 'image/webp'}
 MAX_FILE_SIZE = 8 * 1024 * 1024  # 8MB
 MAX_IMAGE_DIMENSION = 4096
-
 
 @embeds_bp.route('/guilds/<guild_id>/embeds', methods=['GET'])
 @require_auth
@@ -87,7 +81,6 @@ def get_embeds(guild_id):
             "success": False,
             "message": "Failed to fetch embeds"
         }), 500
-
 
 @embeds_bp.route('/guilds/<guild_id>/embeds/<int:embed_id>', methods=['GET'])
 @require_auth
@@ -138,7 +131,6 @@ def get_embed(guild_id, embed_id):
             "success": False,
             "message": "Failed to fetch embed"
         }), 500
-
 
 @embeds_bp.route('/guilds/<guild_id>/embeds', methods=['POST'])
 @require_auth
@@ -252,7 +244,6 @@ def create_embed(guild_id):
             "message": "Failed to create embed"
         }), 500
 
-
 @embeds_bp.route('/guilds/<guild_id>/embeds/<int:embed_id>', methods=['PUT'])
 @require_auth
 def update_embed(guild_id, embed_id):
@@ -355,7 +346,6 @@ def update_embed(guild_id, embed_id):
             "message": "Failed to update embed"
         }), 500
 
-
 @embeds_bp.route('/guilds/<guild_id>/embeds/<int:embed_id>', methods=['DELETE'])
 @require_auth
 def delete_embed(guild_id, embed_id):
@@ -418,7 +408,6 @@ def delete_embed(guild_id, embed_id):
             "success": False,
             "message": "Failed to delete embed"
         }), 500
-
 
 @embeds_bp.route('/guilds/<guild_id>/embeds/<int:embed_id>/send', methods=['POST'])
 @require_auth
@@ -541,7 +530,6 @@ def send_embed(guild_id, embed_id):
             "message": "Failed to send embed"
         }), 500
 
-
 @embeds_bp.route('/guilds/<guild_id>/embeds/<int:embed_id>/duplicate', methods=['POST'])
 @require_auth
 def duplicate_embed(guild_id, embed_id):
@@ -620,7 +608,6 @@ def duplicate_embed(guild_id, embed_id):
             "message": "Failed to duplicate embed"
         }), 500
 
-
 @embeds_bp.route('/guilds/<guild_id>/embeds/stats', methods=['GET'])
 @require_auth
 def get_embed_stats(guild_id):
@@ -670,7 +657,6 @@ def get_embed_stats(guild_id):
             "success": False,
             "message": "Failed to fetch stats"
         }), 500
-
 
 @embeds_bp.route('/guilds/<guild_id>/embeds/upload-image', methods=['POST'])
 @require_auth

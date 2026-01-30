@@ -13,7 +13,6 @@ logger = logging.getLogger(__name__)
 
 _redis_client: Optional[redis.Redis] = None
 
-
 def get_redis_client() -> Optional[redis.Redis]:
     """
     Get or create Redis client singleton.
@@ -47,7 +46,6 @@ def get_redis_client() -> Optional[redis.Redis]:
             _redis_client = None
 
     return _redis_client
-
 
 def publish_cache_invalidation(guild_id: int) -> bool:
     """

@@ -3,35 +3,19 @@ from flask import Blueprint, jsonify, request
 from api.middleware.auth_decorators import require_auth
 from api.services.dao_imports import GuildDao
 from api.services.discord_integration import check_admin_sync, http_client, run_sync
-import sys
-import os
 import json
 import logging
+from acosmibot_core.dao import ReactionRoleDao
+from acosmibot_core.models import ReactionRoleManager
+from acosmibot_core.utils import PremiumChecker
 
 logger = logging.getLogger(__name__)
 reaction_roles_bp = Blueprint('reaction_roles', __name__, url_prefix='/api')
-
-# Import bot models - add path if needed
-try:
-    from models.reaction_role_manager import ReactionRoleManager
-    from Dao.ReactionRoleDao import ReactionRoleDao
-    from utils.premium_checker import PremiumChecker
-except ImportError:
-    # Try adding bot path to sys.path
-    bot_path = os.path.join(os.path.dirname(__file__), '../../acosmibot')
-    if bot_path not in sys.path:
-        sys.path.insert(0, bot_path)
-
-    from models.reaction_role_manager import ReactionRoleManager
-    from Dao.ReactionRoleDao import ReactionRoleDao
-    from utils.premium_checker import PremiumChecker
-
 
 def get_reaction_role_manager():
     """Get reaction role manager instance"""
     with ReactionRoleDao() as dao:
         return ReactionRoleManager(dao)
-
 
 @reaction_roles_bp.route('/guilds/<guild_id>/reaction-roles', methods=['GET'])
 @require_auth
@@ -61,7 +45,6 @@ def get_reaction_roles(guild_id):
             "success": False,
             "message": str(e)
         }), 500
-
 
 @reaction_roles_bp.route('/guilds/<guild_id>/reaction-roles', methods=['POST'])
 @require_auth
@@ -281,7 +264,6 @@ def create_reaction_role(guild_id):
             "message": str(e)
         }), 500
 
-
 @reaction_roles_bp.route('/guilds/<guild_id>/reaction-roles/<int:message_id>', methods=['PUT'])
 @require_auth
 def update_reaction_role(guild_id, message_id):
@@ -377,7 +359,6 @@ def update_reaction_role(guild_id, message_id):
             "message": str(e)
         }), 500
 
-
 @reaction_roles_bp.route('/guilds/<guild_id>/reaction-roles/<int:message_id>', methods=['DELETE'])
 @require_auth
 def delete_reaction_role(guild_id, message_id):
@@ -427,7 +408,6 @@ def delete_reaction_role(guild_id, message_id):
             "success": False,
             "message": str(e)
         }), 500
-
 
 @reaction_roles_bp.route('/guilds/<guild_id>/reaction-roles/preview', methods=['POST'])
 @require_auth
