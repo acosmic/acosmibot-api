@@ -338,38 +338,45 @@ def guild_config_hybrid(guild_id):
 
                 run_async_threadsafe(process_kick_changes())
 
-        # AI settings validation
+        # AI settings validation - only validate if AI settings have changed
         if 'ai' in settings:
-            # 1. Check tier requirement
-            guild_tier = PremiumChecker.get_guild_tier(int(guild_id))
-            if guild_tier != 'premium_plus_ai':
-                return jsonify({
-                    'success': False,
-                    'error': 'AI customization requires Premium + AI subscription',
-                    'upgrade_url': 'https://acosmibot.com/premium'
-                }), 403
+            # Check if AI settings have actually changed
+            current_ai_settings = current_settings.get('ai', {})
+            new_ai_settings = settings.get('ai', {})
+            ai_settings_changed = current_ai_settings != new_ai_settings
 
-            # 2. Validate model access
-            selected_model = settings['ai'].get('model', 'gpt-4o-mini')
-            # For now, all models are available to premium_plus_ai tier
-            # This can be extended later if different tiers have different model access
+            # Only enforce tier requirement if AI settings are being modified
+            if ai_settings_changed:
+                # 1. Check tier requirement
+                guild_tier = PremiumChecker.get_guild_tier(int(guild_id))
+                if guild_tier != 'premium_plus_ai':
+                    return jsonify({
+                        'success': False,
+                        'error': 'AI customization requires Premium + AI subscription',
+                        'upgrade_url': 'https://acosmibot.com/premium'
+                    }), 403
 
-            # 3. Validate instructions length
-            instructions = settings['ai'].get('instructions', '')
-            if len(instructions) > 2000:
-                return jsonify({
-                    'success': False,
-                    'error': 'Instructions must be under 2000 characters'
-                }), 400
+                # 2. Validate model access
+                selected_model = settings['ai'].get('model', 'gpt-4o-mini')
+                # For now, all models are available to premium_plus_ai tier
+                # This can be extended later if different tiers have different model access
 
-            # 4. Validate channel arrays
-            allowed = settings['ai'].get('allowed_channels', [])
-            excluded = settings['ai'].get('excluded_channels', [])
-            if not isinstance(allowed, list) or not isinstance(excluded, list):
-                return jsonify({
-                    'success': False,
-                    'error': 'Channel arrays must be lists'
-                }), 400
+                # 3. Validate instructions length
+                instructions = settings['ai'].get('instructions', '')
+                if len(instructions) > 2000:
+                    return jsonify({
+                        'success': False,
+                        'error': 'Instructions must be under 2000 characters'
+                    }), 400
+
+                # 4. Validate channel arrays
+                allowed = settings['ai'].get('allowed_channels', [])
+                excluded = settings['ai'].get('excluded_channels', [])
+                if not isinstance(allowed, list) or not isinstance(excluded, list):
+                    return jsonify({
+                        'success': False,
+                        'error': 'Channel arrays must be lists'
+                    }), 400
 
         success = settings_manager.update_settings_dict(guild_id, settings)
 
