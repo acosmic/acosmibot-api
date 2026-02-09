@@ -89,7 +89,7 @@ def kick_webhook():
     body = request.get_data()
 
     # Log webhook received
-    logger.info(f"Kick webhook received - Message ID: {message_id}, Type: {event_type}")
+    logger.debug(f"Kick webhook received - Message ID: {message_id}, Type: {event_type}")
 
     # Verify signature if provided
     # NOTE: Kick uses RSA signatures (not HMAC-SHA256), so this verification will fail
@@ -98,7 +98,7 @@ def kick_webhook():
     if signature:
         is_valid = verify_kick_signature(message_id, timestamp, body, signature)
         if not is_valid:
-            logger.debug(f"Signature verification skipped for message {message_id} (RSA not implemented)")
+            logger.warning(f"Signature verification failed for message {message_id} (RSA not implemented)")
 
     # Parse payload
     try:
@@ -119,13 +119,13 @@ def kick_webhook():
     event_dao = KickWebhookEventDao()
     try:
         if event_dao.event_exists(message_id):
-            logger.info(f"Duplicate Kick event {message_id}, skipping")
+            logger.debug(f"Duplicate Kick event {message_id}, skipping")
             return jsonify({"success": True, "message": "Duplicate event"}), 200
 
         # Extract broadcaster info
         broadcaster = payload.get('broadcaster', {}) or payload.get('channel', {}) or {}
         broadcaster_user_id = str(broadcaster.get('user_id') or broadcaster.get('id') or payload.get('broadcaster_user_id') or '')
-        broadcaster_username = broadcaster.get('slug') or broadcaster.get('username') or payload.get('broadcaster_username') or ''
+        broadcaster_username = broadcaster.get('slug') or broadcaster.get('channel_slug') or broadcaster.get('username') or payload.get('broadcaster_username') or ''
 
         # Record event
         event_dao.create_event(
@@ -142,8 +142,9 @@ def kick_webhook():
     # Process event based on type
     if event_type in ['livestream.status.updated', 'stream.online', 'stream.offline', 'live']:
         asyncio.run(handle_livestream_status_updated(payload, message_id))
+        logger.info(f"Kick webhook processed: {event_type} for {broadcaster_username}")
     else:
-        logger.info(f"Received Kick event type: {event_type}")
+        logger.info(f"Received unhandled Kick event type: {event_type}")
 
     return jsonify({"success": True}), 200
 
@@ -169,10 +170,10 @@ async def handle_livestream_status_updated(payload: dict, event_id: str):
     # Extract broadcaster info
     broadcaster = payload.get('broadcaster', {}) or payload.get('channel', {}) or {}
     broadcaster_user_id = str(broadcaster.get('user_id') or broadcaster.get('id') or payload.get('broadcaster_user_id') or '')
-    broadcaster_username = broadcaster.get('slug') or broadcaster.get('username') or payload.get('broadcaster_username') or ''
+    broadcaster_username = broadcaster.get('slug') or broadcaster.get('channel_slug') or broadcaster.get('username') or payload.get('broadcaster_username') or ''
     broadcaster_display_name = broadcaster.get('display_name') or broadcaster.get('name') or broadcaster_username
 
-    logger.info(f"Processing Kick livestream event for {broadcaster_username}: is_live={is_live}")
+    logger.debug(f"Processing Kick livestream event for {broadcaster_username}: is_live={is_live}")
 
     if is_live:
         await handle_stream_online(payload, broadcaster_user_id, broadcaster_username,
@@ -183,7 +184,7 @@ async def handle_livestream_status_updated(payload: dict, event_id: str):
 async def handle_stream_online(payload, broadcaster_user_id, broadcaster_username,
                                 broadcaster_display_name, event_id):
     """Handle stream going online - post announcements"""
-    logger.info(f"Processing Kick stream.online for {broadcaster_username} ({broadcaster_user_id})")
+    logger.debug(f"Processing Kick stream.online for {broadcaster_username} ({broadcaster_user_id})")
 
     # Get subscription record to find tracking guilds
     subscription_dao = KickSubscriptionDao()
@@ -231,14 +232,14 @@ async def handle_stream_online(payload, broadcaster_user_id, broadcaster_usernam
                     api_thumbnail = stream.get('thumbnail', '')
                     if api_thumbnail and not thumbnail_url:
                         thumbnail_url = api_thumbnail
-                        logger.info(f"Using thumbnail from API for {broadcaster_username}: {thumbnail_url[:100]}")
+                        logger.debug(f"Using thumbnail from API for {broadcaster_username}: {thumbnail_url[:100]}")
 
                 # Try to construct profile picture URL using pattern
                 # Kick uses: https://files.kick.com/images/user/{user_id}/profile_image/...
                 if not profile_picture_url and broadcaster_user_id:
                     # We don't have the exact filename, but some streamers might have it in the webhook
                     # For now, log that it's missing
-                    logger.info(f"No profile picture available for {broadcaster_username} (user_id: {broadcaster_user_id})")
+                    logger.debug(f"No profile picture available for {broadcaster_username} (user_id: {broadcaster_user_id})")
         except Exception as e:
             logger.warning(f"Failed to get Kick channel info for {broadcaster_username}: {e}")
 
@@ -258,7 +259,7 @@ async def handle_stream_online(payload, broadcaster_user_id, broadcaster_usernam
 
             kick_settings = settings.get('kick', {})
             if not kick_settings.get('enabled'):
-                logger.info(f"Kick disabled for guild {guild_id}")
+                logger.debug(f"Kick disabled for guild {guild_id}")
                 continue
 
             # Find streamer config
@@ -275,7 +276,7 @@ async def handle_stream_online(payload, broadcaster_user_id, broadcaster_usernam
             # Check if announcement already exists (avoid duplicates)
             existing = announcement_dao.get_active_announcement(guild_id, broadcaster_username)
             if existing:
-                logger.info(f"Active announcement already exists for {broadcaster_username} in guild {guild_id}")
+                logger.debug(f"Active announcement already exists for {broadcaster_username} in guild {guild_id}")
                 continue
 
             # Get announcement channel
@@ -381,7 +382,7 @@ async def handle_stream_online(payload, broadcaster_user_id, broadcaster_usernam
 
 async def handle_stream_offline(payload, broadcaster_user_id, broadcaster_username, event_id):
     """Handle stream going offline - update announcements"""
-    logger.info(f"Processing Kick stream.offline for {broadcaster_username} ({broadcaster_user_id})")
+    logger.debug(f"Processing Kick stream.offline for {broadcaster_username} ({broadcaster_user_id})")
 
     # Get subscription record to find tracking guilds
     subscription_dao = KickSubscriptionDao()
@@ -410,7 +411,7 @@ async def handle_stream_offline(payload, broadcaster_user_id, broadcaster_userna
             announcement = announcement_dao.get_active_announcement(guild_id, broadcaster_username)
 
             if not announcement:
-                logger.info(f"No active Kick announcement for {broadcaster_username} in guild {guild_id}")
+                logger.debug(f"No active Kick announcement for {broadcaster_username} in guild {guild_id}")
                 continue
 
             # Calculate duration

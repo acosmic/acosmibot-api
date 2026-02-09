@@ -191,6 +191,24 @@ class SimpleDiscordHTTPClient:
                 logger.error(f"Error posting message: {e}")
                 return None
 
+    async def edit_message(self, channel_id: int, message_id: int, message_data: dict):
+        """Edit an existing message in a Discord channel"""
+        async with aiohttp.ClientSession() as session:
+            try:
+                url = f"{self.base_url}/channels/{channel_id}/messages/{message_id}"
+                async with session.patch(url, headers=self.headers, json=message_data) as response:
+                    if response.status == 200:
+                        logger.debug(f"Successfully edited message {message_id} in channel {channel_id}")
+                        return await response.json()
+                    else:
+                        logger.error(f"Failed to edit message {message_id} in channel {channel_id}: {response.status}")
+                        error_text = await response.text()
+                        logger.error(f"Response: {error_text}")
+                        return None
+            except Exception as e:
+                logger.error(f"Error editing message: {e}")
+                return None
+
     async def add_reaction(self, channel_id: int, message_id: int, emoji: str):
         """Add a reaction to a Discord message"""
         async with aiohttp.ClientSession() as session:

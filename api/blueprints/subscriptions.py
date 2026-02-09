@@ -385,7 +385,7 @@ def stripe_webhook():
         return jsonify({"error": "Invalid signature"}), 400
 
     event_type = event['type']
-    logger.info(f"Received Stripe webhook: {event_type}")
+    logger.debug(f"Received Stripe webhook: {event_type}")
 
     try:
         # Handle different event types
@@ -405,7 +405,7 @@ def stripe_webhook():
             handle_payment_succeeded(event['data']['object'])
 
         else:
-            logger.info(f"Unhandled webhook event type: {event_type}")
+            logger.debug(f"Unhandled webhook event type: {event_type}")
 
         return jsonify({"success": True}), 200
 
@@ -418,7 +418,7 @@ def stripe_webhook():
 
 def handle_checkout_completed(session):
     """Handle successful checkout completion"""
-    logger.info(f"Checkout completed: {session['id']}")
+    logger.debug(f"Checkout completed: {session['id']}")
 
     guild_id = session['metadata'].get('guild_id')
     if not guild_id:
@@ -448,7 +448,7 @@ def handle_checkout_completed(session):
 
         if existing_sub:
             # Update existing subscription with all fields including Stripe IDs
-            logger.info(f"Updating existing subscription for guild {guild_id} to tier {tier}")
+            logger.debug(f"Updating existing subscription for guild {guild_id} to tier {tier}")
             update_query = """
                 UPDATE Subscriptions
                 SET tier = %s,
@@ -476,7 +476,7 @@ def handle_checkout_completed(session):
             )
         else:
             # Create new subscription
-            logger.info(f"Creating new subscription for guild {guild_id} with tier {tier}")
+            logger.debug(f"Creating new subscription for guild {guild_id} with tier {tier}")
             sub_dao.create_subscription(
                 guild_id=guild_id,
                 tier=tier,
@@ -498,7 +498,7 @@ def handle_checkout_completed(session):
 
 def handle_subscription_updated(subscription):
     """Handle subscription update events"""
-    logger.info(f"Subscription updated: {subscription['id']}")
+    logger.debug(f"Subscription updated: {subscription['id']}")
 
     subscription_id = subscription['id']
     status = subscription['status']
@@ -517,7 +517,7 @@ def handle_subscription_updated(subscription):
     cancel_at = subscription.get('cancel_at')
     cancel_at_period_end = subscription.get('cancel_at_period_end', False) or (cancel_at is not None)
 
-    logger.info(f"Updating subscription {subscription_id}: status={status}, cancel_at={cancel_at}, cancel_at_period_end={cancel_at_period_end}")
+    logger.debug(f"Updating subscription {subscription_id}: status={status}, cancel_at={cancel_at}, cancel_at_period_end={cancel_at_period_end}")
 
     # Update subscription in database
     with SubscriptionDao() as sub_dao:
@@ -546,7 +546,7 @@ def handle_subscription_updated(subscription):
 
 def handle_subscription_deleted(subscription):
     """Handle subscription deletion/cancellation"""
-    logger.info(f"Subscription deleted: {subscription['id']}")
+    logger.debug(f"Subscription deleted: {subscription['id']}")
 
     subscription_id = subscription['id']
 
@@ -602,7 +602,7 @@ def handle_payment_failed(invoice):
 
 def handle_payment_succeeded(invoice):
     """Handle successful payment"""
-    logger.info(f"Payment succeeded for invoice: {invoice['id']}")
+    logger.debug(f"Payment succeeded for invoice: {invoice['id']}")
 
     subscription_id = invoice.get('subscription')
     if not subscription_id:

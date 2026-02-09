@@ -5,12 +5,12 @@ Decorators for protecting admin-only API routes
 """
 
 import os
+import logging
 from functools import wraps
 from flask import request, jsonify
 from acosmibot_core.dao import AdminUserDao, AuditLogDao
-from acosmibot_core.utils import AppLogger
 
-logger = AppLogger(__name__).get_logger()
+logger = logging.getLogger(__name__)
 
 def require_admin(f):
     """

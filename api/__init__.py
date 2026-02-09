@@ -11,9 +11,10 @@ load_dotenv(dotenv_path=dotenv_path)
 
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from contextlib import asynccontextmanager
-from flask import Flask
+from flask import Flask, request
 from flask_cors import CORS
 from config import config
+from werkzeug.middleware.proxy_fix import ProxyFix
 import asyncio
 import threading
 import atexit
@@ -76,6 +77,16 @@ def create_app(config_name='default'):
     app = Flask(__name__)
     app.config.from_object(config[config_name])
 
+    # Configure ProxyFix for Cloudflare - trust 1 proxy for forwarded headers
+    # This makes request.remote_addr return the real client IP from CF-Connecting-IP/X-Forwarded-For
+    app.wsgi_app = ProxyFix(
+        app.wsgi_app,
+        x_for=1,      # Trust X-Forwarded-For from 1 proxy (Cloudflare)
+        x_proto=1,    # Trust X-Forwarded-Proto
+        x_host=1,     # Trust X-Forwarded-Host
+        x_prefix=1    # Trust X-Forwarded-Prefix
+    )
+
     # Setup CORS
     CORS(app, origins=app.config['CORS_ORIGINS'], supports_credentials=True)
 
@@ -93,6 +104,7 @@ def create_app(config_name='default'):
     )
     from api.blueprints.twitch_webhooks import twitch_webhooks_bp
     from api.blueprints.youtube_webhooks import youtube_webhooks_bp
+    from api.blueprints.activity_monitor import activity_monitor_bp
 
     app.register_blueprint(utilities_bp)
     app.register_blueprint(auth_bp)
@@ -112,5 +124,6 @@ def create_app(config_name='default'):
     app.register_blueprint(custom_commands_bp)
     app.register_blueprint(ai_images_bp)
     app.register_blueprint(embeds_bp)
+    app.register_blueprint(activity_monitor_bp)
 
     return app

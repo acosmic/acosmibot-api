@@ -5,13 +5,14 @@ AI Images API Blueprint
 Provides REST API endpoints for AI image generation and analysis usage statistics.
 """
 
+import logging
 from flask import Blueprint, jsonify, request
 from api.middleware.auth_decorators import require_auth
 from api.services.discord_integration import check_admin_sync
 from acosmibot_core.dao import AIImageDao
-from acosmibot_core.utils import PremiumChecker, AppLogger
+from acosmibot_core.utils import PremiumChecker
 
-logger = AppLogger(__name__).get_logger()
+logger = logging.getLogger(__name__)
 ai_images_bp = Blueprint('ai_images', __name__, url_prefix='/api')
 @ai_images_bp.route('/guilds/<guild_id>/ai-images/stats', methods=['GET'])
 @require_auth

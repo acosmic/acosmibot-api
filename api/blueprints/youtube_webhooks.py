@@ -97,7 +97,9 @@ def handle_webhook_notification():
 
                         logger.info(f"Video {video_id} is LIVE! Title: {video_details.get('title')}, Viewers: {video_details.get('viewer_count')}")
 
-                        event_id = f"{channel_id}-{video_id}-websub-{datetime.now().isoformat()}"
+                        # NOTE: event_id must NOT include timestamp to prevent duplicates
+                        # The UNIQUE constraint on event_id will catch duplicate webhook events
+                        event_id = f"{channel_id}-{video_id}-live_start"
 
                         # Store comprehensive payload with live stream details
                         payload_data = {
