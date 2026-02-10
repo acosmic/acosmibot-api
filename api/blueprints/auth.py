@@ -78,7 +78,7 @@ def get_current_user():
                 return date_field.strftime(format_str)
 
             # Get user's Discord avatar
-            avatar_url = user.avatar_url or f"https://cdn.discordapp.com/embed/avatars/{int(payload['user_id']) % 5}.png"
+            avatar_url = user.avatar_url or f"https://cdn.discordapp.com/embed/avatars/{(int(payload['user_id']) >> 22) % 6}.png"
 
             return jsonify({
                 'id': str(user.id),
@@ -95,7 +95,32 @@ def get_current_user():
                 'last_seen': safe_datetime_format(user.last_seen)
             })
         else:
-            return jsonify({'error': 'User not found in database'}), 404
+            # User not in database (new user with no servers) - return basic info from JWT
+            # This allows new users to access the dashboard and see the onboarding flow
+            user_id = payload['user_id']
+            avatar_hash = payload.get('avatar')
+
+            # Build avatar URL - use Discord avatar if available, otherwise default
+            if avatar_hash:
+                avatar_url = f"https://cdn.discordapp.com/avatars/{user_id}/{avatar_hash}.png?size=256"
+            else:
+                avatar_url = f"https://cdn.discordapp.com/embed/avatars/{(int(user_id) >> 22) % 6}.png"
+
+            return jsonify({
+                'id': str(user_id),
+                'username': payload.get('username', 'User'),
+                'global_name': payload.get('global_name', payload.get('username', 'User')),
+                'avatar': avatar_url,
+                'level': 1,
+                'currency': 0,
+                'total_messages': 0,
+                'total_reactions': 0,
+                'global_exp': 0,
+                'account_created': None,
+                'first_seen': None,
+                'last_seen': None,
+                'is_new_user': True  # Flag to indicate this is a new user
+            })
 
     except jwt.ExpiredSignatureError:
         return jsonify({'error': 'Token expired'}), 401

@@ -46,6 +46,8 @@ class DiscordOAuthService:
         payload = {
             'user_id': user_data['id'],
             'username': user_data['username'],
+            'global_name': user_data.get('global_name'),
+            'avatar': user_data.get('avatar'),
             'exp': datetime.utcnow() + timedelta(hours=24)
         }
         return jwt.encode(payload, self.jwt_secret, algorithm='HS256')

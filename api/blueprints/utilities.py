@@ -63,6 +63,32 @@ def list_endpoints():
 @utilities_bp.route('/bot/invite')
 def get_bot_invite():
     """Bot invite coming soon message"""
+    # TODO: Uncomment when ready to allow bot invites
+    # client_id = os.getenv('DISCORD_CLIENT_ID')
+    # if not client_id:
+    #     return jsonify({
+    #         'success': False,
+    #         'message': 'Bot client ID not configured'
+    #     }), 500
+    #
+    # # Permissions for bot functionality:
+    # # Administrator for simplicity (can be refined to specific perms)
+    # permissions = 8  # Administrator bit
+    #
+    # # Scopes: bot + applications.commands for slash commands
+    # invite_url = (
+    #     f"https://discord.com/api/oauth2/authorize"
+    #     f"?client_id={client_id}"
+    #     f"&permissions={permissions}"
+    #     f"&scope=bot%20applications.commands"
+    # )
+    #
+    # return jsonify({
+    #     'success': True,
+    #     'invite_url': invite_url,
+    #     'permissions': permissions
+    # })
+
     return jsonify({
         'message': 'Bot invite feature coming soon!',
         'status': 'coming_soon',
